@@ -35,4 +35,4 @@ scp $FullPath "${VPS_USER}@${VPS_IP}:${VPSPath}"
 Write-Host "[INFO] Перезапуск backend..." -ForegroundColor Green
 ssh "${VPS_USER}@${VPS_IP}" "cd ~/projects/${PROJECT_DIR} && docker-compose restart backend"
 
-Write-Host "[INFO] ✅ Готово! Файл обновлен и сервис перезапущен" -ForegroundColor Green
+Write-Host "[INFO] Готово! Файл обновлен и сервис перезапущен" -ForegroundColor Green

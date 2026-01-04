@@ -95,17 +95,17 @@ Write-Step "Пересборка и перезапуск контейнера...
 
 $commands = @"
 cd ~/projects/${PROJECT_DIR}
-echo '🔨 Сборка backend контейнера...'
+echo 'Сборка backend контейнера...'
 docker-compose build backend
-echo '🔄 Перезапуск backend...'
+echo 'Перезапуск backend...'
 docker-compose restart backend
 echo ''
-echo '📊 Статус контейнеров:'
+echo 'Статус контейнеров:'
 docker-compose ps
 echo ''
-echo '✅ Деплой завершен!'
+echo 'Деплой завершен!'
 "@
 
 ssh "${VPS_USER}@${VPS_IP}" $commands
 
-Write-Info "✅ Готово! Проект обновлен на VPS"
+Write-Info "Готово! Проект обновлен на VPS"
