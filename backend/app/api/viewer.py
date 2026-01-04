@@ -586,34 +586,31 @@ async def embed_viewer(
     viewer_url = f"/viewer?token={viewer_token}"
     
     # Получаем host
-    host = request.headers.get("Host", request.url.hostname)
+    host = request.headers.get("Host", request.url.hostname) or "lessons.incrypto.ru"
     
-    # ВСЕГДА используем HTTPS для домена lessons.incrypto.ru
-    if host and "lessons.incrypto.ru" in str(host).lower():
+    # ПРИНУДИТЕЛЬНО используем HTTPS для домена lessons.incrypto.ru
+    # Это критически важно для работы через HTTPS сайт Tilda
+    if "lessons.incrypto.ru" in str(host).lower():
         scheme = "https"
+        base_url = f"https://{host}".rstrip('/')
+        print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain")
     else:
-        # Определяем протокол из заголовков (для работы за Nginx reverse proxy)
+        # Для других доменов определяем протокол из заголовков
         scheme = request.headers.get("X-Forwarded-Proto", "").lower()
         
-        # Если заголовок не установлен, проверяем Referer
         if not scheme:
             referer = request.headers.get("Referer", "")
             if referer and referer.startswith("https://"):
                 scheme = "https"
             else:
-                # По умолчанию используем схему из URL запроса
                 scheme = request.url.scheme or "https"
         
-        # Если схема все еще не определена или http, но запрос идет через HTTPS домен
-        if scheme != "https" and host and ("lessons.incrypto.ru" in str(host).lower() or request.url.scheme == "https"):
-            scheme = "https"
-    
-    # Формируем base_url с правильным протоколом
-    base_url = f"{scheme}://{host}".rstrip('/')
+        base_url = f"{scheme}://{host}".rstrip('/')
     
     # Логирование для отладки
     print(f"[EMBED] Host: {host}, Scheme: {scheme}, X-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto')}, URL scheme: {request.url.scheme}")
     print(f"[EMBED] Final base_url: {base_url}")
+    print(f"[EMBED] Final viewer URL: {base_url}{viewer_url}")
     
     return HTMLResponse(f"""
     <!DOCTYPE html>
