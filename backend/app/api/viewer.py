@@ -586,14 +586,23 @@ async def embed_viewer(
     viewer_url = f"/viewer?token={viewer_token}"
     
     # Определяем протокол из заголовков (для работы за Nginx reverse proxy)
-    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
-    if scheme == "https" or request.url.scheme == "https":
+    # Приоритет: X-Forwarded-Proto > Referer > request.url.scheme
+    scheme = request.headers.get("X-Forwarded-Proto", "").lower()
+    
+    # Если заголовок не установлен, проверяем Referer
+    if not scheme:
+        referer = request.headers.get("Referer", "")
+        if referer.startswith("https://"):
+            scheme = "https"
+        else:
+            scheme = request.url.scheme
+    
+    # Если домен lessons.incrypto.ru, всегда используем HTTPS
+    host = request.headers.get("Host", request.url.hostname)
+    if "lessons.incrypto.ru" in str(host).lower():
         scheme = "https"
-    else:
-        scheme = "http"
     
     # Формируем base_url с правильным протоколом
-    host = request.headers.get("Host", request.url.hostname)
     base_url = f"{scheme}://{host}".rstrip('/')
     
     return HTMLResponse(f"""
