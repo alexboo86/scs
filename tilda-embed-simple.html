@@ -1,0 +1,262 @@
+<!-- 
+Простой вариант для вставки в HTML блок Tilda
+Параметры уже настроены:
+- SERVER_URL: http://185.88.159.33:8000
+- DOCUMENT_TOKEN: PENd1kfnZ74xDNBCi7nGIEFPleMTNMeZhH-RXo3bTHQ
+-->
+
+<div id="secure-content-viewer-container" style="width: 100%; height: 100vh; min-height: 600px; position: relative; background: transparent; margin: 0; padding: 0; border: none;">
+    <div id="viewer-loading" style="display: flex; justify-content: center; align-items: center; height: 100%; font-size: 18px; color: #666; background: transparent;">
+        Загрузка документа...
+    </div>
+</div>
+
+<script>
+(function() {
+    console.log('[Secure Content Viewer] Starting initialization...');
+    
+    // ========== НАСТРОЙКИ ==========
+    const SERVER_URL = 'http://185.88.159.33:8000';
+    const DOCUMENT_TOKEN = 'PENd1kfnZ74xDNBCi7nGIEFPleMTNMeZhH-RXo3bTHQ';  // Токен документа
+    
+    console.log('[Secure Content Viewer] Server URL:', SERVER_URL);
+    console.log('[Secure Content Viewer] Document Token:', DOCUMENT_TOKEN);
+    
+    // Функция получения email из Tilda localStorage
+    function getTildaUserEmail() {
+        try {
+            // Получаем projectId из элемента #allrecords
+            const allRecords = document.querySelector('#allrecords');
+            if (!allRecords) {
+                console.log('[Secure Content Viewer] #allrecords element not found, trying alternative method');
+                // Альтернативный способ: пытаемся найти projectId в других местах
+                const tildaProjectId = document.querySelector('[data-tilda-project-id]');
+                if (tildaProjectId) {
+                    const projectId = parseInt(tildaProjectId.dataset.tildaProjectId);
+                    const lsUser = window.localStorage.getItem('tilda_members_profile' + projectId);
+                    if (lsUser) {
+                        const userData = JSON.parse(lsUser);
+                        if (userData && userData.login) {
+                            console.log('[Secure Content Viewer] Got email from Tilda localStorage:', userData.login);
+                            return userData.login;
+                        }
+                    }
+                }
+                return null;
+            }
+            
+            const projectId = parseInt(allRecords.dataset.tildaProjectId);
+            if (!projectId || isNaN(projectId)) {
+                console.log('[Secure Content Viewer] Project ID not found or invalid');
+                return null;
+            }
+            
+            const lsUser = window.localStorage.getItem('tilda_members_profile' + projectId);
+            if (!lsUser) {
+                console.log('[Secure Content Viewer] Tilda user data not found in localStorage');
+                return null;
+            }
+            
+            const userData = JSON.parse(lsUser);
+            if (userData && userData.login) {
+                console.log('[Secure Content Viewer] Got email from Tilda localStorage:', userData.login);
+                return userData.login;
+            }
+            
+            return null;
+        } catch (e) {
+            console.error('[Secure Content Viewer] Error getting email from Tilda localStorage:', e);
+            return null;
+        }
+    }
+    
+    // Получаем email из URL (если Tilda передает через ?email=user@example.com)
+    const urlParams = new URLSearchParams(window.location.search);
+    let userEmail = urlParams.get('email') || null;
+    
+    // Пробуем получить email из Tilda localStorage, если не получен из URL
+    if (!userEmail) {
+        userEmail = getTildaUserEmail();
+    }
+    
+    console.log('[Secure Content Viewer] User Email:', userEmail);
+    
+    // Получаем домен текущей страницы для проверки на сервере
+    const currentDomain = window.location.hostname;
+    console.log('[Secure Content Viewer] Current domain:', currentDomain);
+    
+    // Получаем IP адрес клиента через внешний сервис
+    async function getClientIP() {
+        try {
+            // Пробуем получить IP через несколько сервисов
+            const services = [
+                'https://api.ipify.org?format=json',
+                'https://api.myip.com',
+                'https://ipapi.co/json/'
+            ];
+            
+            for (const service of services) {
+                try {
+                    const response = await fetch(service, { 
+                        method: 'GET',
+                        mode: 'cors',
+                        cache: 'no-cache'
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        const ip = data.ip || data.query || data.ip_address;
+                        if (ip && !ip.startsWith('172.') && !ip.startsWith('10.') && !ip.startsWith('192.168.')) {
+                            console.log('[Secure Content Viewer] Got client IP:', ip, 'from', service);
+                            return ip;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Secure Content Viewer] Failed to get IP from', service, e);
+                    continue;
+                }
+            }
+            return null;
+        } catch (e) {
+            console.error('[Secure Content Viewer] Error getting client IP:', e);
+            return null;
+        }
+    }
+    
+    // Функция загрузки viewer
+    function loadViewer(clientIP) {
+        // Формируем URL
+        let embedUrl = SERVER_URL + '/api/viewer/embed?document_token=' + encodeURIComponent(DOCUMENT_TOKEN);
+        if (userEmail) {
+            embedUrl += '&user_email=' + encodeURIComponent(userEmail);
+        }
+        // Передаем домен для проверки (временное решение для отладки)
+        embedUrl += '&source_domain=' + encodeURIComponent(currentDomain);
+        // Передаем IP адрес клиента, если удалось получить
+        if (clientIP) {
+            embedUrl += '&client_ip=' + encodeURIComponent(clientIP);
+        }
+        
+        console.log('[Secure Content Viewer] Embed URL:', embedUrl);
+        console.log('[Secure Content Viewer] Current domain value:', currentDomain);
+        console.log('[Secure Content Viewer] URL contains source_domain:', embedUrl.includes('source_domain'));
+        
+        // Проверяем, что параметр добавлен
+        const urlObj = new URL(embedUrl);
+        console.log('[Secure Content Viewer] URL search params:', urlObj.searchParams.toString());
+        console.log('[Secure Content Viewer] source_domain in URL:', urlObj.searchParams.get('source_domain'));
+        
+        // Создаем iframe
+        const container = document.getElementById('secure-content-viewer-container');
+        const loading = document.getElementById('viewer-loading');
+        
+        if (!container || !loading) {
+            console.error('[Secure Content Viewer] Container or loading element not found!');
+            return;
+        }
+        
+        const iframe = document.createElement('iframe');
+        iframe.src = embedUrl;
+        iframe.width = '100%';
+        iframe.height = '100%';
+        iframe.frameBorder = '0';
+        iframe.allowFullscreen = true;
+        iframe.style.cssText = 'border: none; width: 100%; height: 100%; min-height: 600px; display: none; margin: 0; padding: 0; background: transparent;';
+        // Убираем sandbox для отладки - может блокировать загрузку
+        // iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-popups allow-forms');
+        
+        console.log('[Secure Content Viewer] Iframe created, setting src...');
+        
+        let iframeLoaded = false;
+        
+        // Когда iframe загрузится
+        iframe.onload = function() {
+            console.log('[Secure Content Viewer] Iframe loaded successfully!');
+            iframeLoaded = true;
+            // Небольшая задержка перед скрытием loading для плавности
+            setTimeout(function() {
+                loading.style.display = 'none';
+                iframe.style.display = 'block';
+                // Убеждаемся, что iframe занимает весь контейнер
+                iframe.style.width = '100%';
+                iframe.style.height = '100%';
+            }, 500);
+        };
+        
+        // При ошибке загрузки
+        iframe.onerror = function(e) {
+            console.error('[Secure Content Viewer] Iframe error:', e);
+            loading.textContent = 'Ошибка загрузки документа. Проверьте консоль браузера (F12).';
+            loading.style.color = '#d32f2f';
+        };
+        
+        // Проверяем доступность сервера через health endpoint
+        fetch(SERVER_URL + '/health', { method: 'GET', mode: 'no-cors' })
+            .then(function() {
+                console.log('[Secure Content Viewer] Health check: Server is reachable');
+            })
+            .catch(function(err) {
+                console.error('[Secure Content Viewer] Health check failed:', err);
+                console.error('[Secure Content Viewer] This might be Mixed Content (HTTPS -> HTTP) blocking');
+            });
+        
+        // Пробуем загрузить iframe с обработкой ошибок
+        console.log('[Secure Content Viewer] Attempting to load iframe from:', embedUrl);
+        
+        // Таймаут на случай, если iframe не загрузится
+        setTimeout(function() {
+            if (!iframeLoaded && iframe.style.display === 'none') {
+                console.warn('[Secure Content Viewer] Iframe not loaded after 10 seconds');
+                console.warn('[Secure Content Viewer] Current page URL:', window.location.href);
+                console.warn('[Secure Content Viewer] Iframe src:', iframe.src);
+                console.warn('[Secure Content Viewer] Iframe contentWindow:', iframe.contentWindow);
+                console.warn('[Secure Content Viewer] Iframe contentDocument:', iframe.contentDocument);
+                
+                // Проверяем, может быть iframe загрузился, но не сработал onload
+                try {
+                    if (iframe.contentWindow && iframe.contentWindow.location.href) {
+                        console.log('[Secure Content Viewer] Iframe actually loaded, showing it');
+                        loading.style.display = 'none';
+                        iframe.style.display = 'block';
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('[Secure Content Viewer] Cannot access iframe content (cross-origin):', e.message);
+                }
+                
+                loading.innerHTML = 'Таймаут загрузки.<br>Возможные причины:<br>1. Mixed Content (HTTPS -> HTTP)<br>2. CORS блокировка<br>3. Файрвол<br>Проверьте консоль браузера (F12)';
+                loading.style.color = '#d32f2f';
+            }
+        }, 10000);
+        
+        container.appendChild(iframe);
+        console.log('[Secure Content Viewer] Iframe appended to container');
+    }
+    
+    // Функция инициализации после загрузки DOM
+    function initializeViewer() {
+        // Пробуем получить email из Tilda localStorage еще раз (на случай, если DOM загрузился позже)
+        if (!userEmail) {
+            const tildaEmail = getTildaUserEmail();
+            if (tildaEmail) {
+                userEmail = tildaEmail;
+                console.log('[Secure Content Viewer] Updated user email from Tilda:', userEmail);
+            }
+        }
+        
+        // Получаем IP и загружаем viewer
+        getClientIP().then(ip => {
+            loadViewer(ip);
+        }).catch(() => {
+            loadViewer(null);
+        });
+    }
+    
+    // Запускаем инициализацию
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initializeViewer);
+    } else {
+        // DOM уже загружен, но даем небольшую задержку для Tilda localStorage
+        setTimeout(initializeViewer, 100);
+    }
+})();
+</script>

@@ -1,0 +1,1109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Защищенный просмотр</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: transparent;
+            color: #fff;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Если viewer не в iframe, используем прозрачный фон */
+        body:not(.embedded) {
+            background: transparent;
+        }
+        
+        .viewer-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            margin: 0;
+            padding: 0;
+            border: none;
+            overflow: hidden;
+        }
+        
+        .toolbar {
+            background: transparent;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: none;
+            z-index: 1000;
+            margin: 0;
+            width: 100%;
+            flex-shrink: 0;
+        }
+        
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .btn {
+            background: rgba(58, 58, 58, 0.8);
+            border: 1px solid rgba(74, 74, 74, 0.8);
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+            backdrop-filter: blur(5px);
+        }
+        
+        .btn:hover {
+            background: rgba(74, 74, 74, 0.9);
+        }
+        
+        .btn:active {
+            background: rgba(42, 42, 42, 0.9);
+        }
+        
+        .page-info {
+            font-size: 14px;
+            color: #aaa;
+        }
+        
+        .viewer-content {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            background: transparent;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0;
+            margin: 0;
+            border: none;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .page-container {
+            position: relative;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            background: transparent;
+            border: none;
+        }
+        
+        .page-image {
+            width: auto;
+            height: auto;
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+            box-shadow: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-user-drag: none;
+            pointer-events: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            object-fit: contain;
+            margin: 0;
+            padding: 0;
+        }
+        
+        
+        /* Canvas для анимированного водяного знака */
+        #watermarkCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            z-index: 10;
+            image-rendering: pixelated;
+            /* Временно для отладки - можно убрать */
+            /* border: 1px solid red; */
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #aaa;
+        }
+        
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+        
+        .overlay.active {
+            display: flex;
+        }
+        
+        .overlay-message {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            text-align: center;
+            max-width: 400px;
+        }
+        
+        /* Защита от выделения */
+        ::selection {
+            background: transparent;
+        }
+        
+        ::-moz-selection {
+            background: transparent;
+        }
+        
+        /* Скрытие контекстного меню */
+        img {
+            -webkit-user-drag: none;
+            -khtml-user-drag: none;
+            -moz-user-drag: none;
+            -o-user-drag: none;
+            user-drag: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewer-container">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <button class="btn" onclick="previousPage()">← Назад</button>
+                <span class="page-info" id="pageInfo">Страница 1 из 1</span>
+                <button class="btn" onclick="nextPage()">Вперед →</button>
+            </div>
+            <div class="toolbar-right">
+                <button class="btn" onclick="zoomOut()">-</button>
+                <span id="zoomLevel">100%</span>
+                <button class="btn" onclick="zoomIn()">+</button>
+            </div>
+        </div>
+        
+        <div class="viewer-content" id="viewerContent">
+            <div class="loading" id="loading">Загрузка...</div>
+            <div class="page-container" id="pageContainer" style="display: none;">
+                <img id="pageImage" class="page-image" alt="Страница документа" />
+                <canvas id="watermarkCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div class="overlay" id="overlay">
+        <div class="overlay-message">
+            <h3>Доступ запрещен</h3>
+            <p>Попытка сделать скриншот или скопировать контент обнаружена.</p>
+            <button class="btn" onclick="closeOverlay()" style="margin-top: 15px;">Понятно</button>
+        </div>
+    </div>
+    
+    <script>
+        // Конфигурация
+        const CONFIG = {
+            token: new URLSearchParams(window.location.search).get('token') || '',
+            apiBase: '/api',
+            currentPage: 1,
+            totalPages: 1,
+            zoomLevel: 1.0,
+            documentId: null,
+            watermarkSettings: null,
+            watermarkData: {
+                user_email: null,
+                user_id: null,
+                ip_address: null
+            }
+        };
+        
+        // Анимация водяного знака
+        let watermarkAnimation = null;
+        let watermarkCanvas = null;
+        let watermarkCtx = null;
+        let watermarkPositions = [];
+        let currentPositionIndex = 0;
+        let animationFrameId = null;
+        
+        // Защита от копирования
+        document.addEventListener('copy', (e) => {
+            e.preventDefault();
+            showOverlay('Копирование запрещено');
+            return false;
+        });
+        
+        document.addEventListener('cut', (e) => {
+            e.preventDefault();
+            showOverlay('Вырезание запрещено');
+            return false;
+        });
+        
+        document.addEventListener('paste', (e) => {
+            e.preventDefault();
+            return false;
+        });
+        
+        // Блокировка правого клика
+        document.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            showOverlay('Контекстное меню отключено');
+            return false;
+        });
+        
+        // Блокировка горячих клавиш
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+S, Ctrl+P, Print Screen, F12
+            if ((e.ctrlKey && (e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P')) ||
+                e.key === 'PrintScreen' ||
+                e.key === 'F12' ||
+                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c'))) {
+                e.preventDefault();
+                showOverlay('Эта операция запрещена');
+                return false;
+            }
+        });
+        
+        // Блокировка DevTools (только если не в iframe)
+        let devtools = {open: false};
+        // Проверяем, находимся ли мы в iframe
+        const isInIframe = window.self !== window.top;
+        
+        // Применяем стили для iframe сразу после определения
+        if (isInIframe) {
+            document.body.classList.add('embedded');
+            // Убираем все отступы и делаем фон прозрачным при встраивании
+            document.body.style.background = 'transparent';
+            document.body.style.margin = '0';
+            document.body.style.padding = '0';
+            document.documentElement.style.background = 'transparent';
+            document.documentElement.style.margin = '0';
+            document.documentElement.style.padding = '0';
+            
+            // Убираем рамки у контейнера (после загрузки DOM)
+            setTimeout(() => {
+                const viewerContainer = document.querySelector('.viewer-container');
+                if (viewerContainer) {
+                    viewerContainer.style.margin = '0';
+                    viewerContainer.style.padding = '0';
+                    viewerContainer.style.border = 'none';
+                }
+            }, 100);
+            
+            console.log('[VIEWER] Viewer detected in iframe, applying transparent background');
+            console.log('[VIEWER] Current origin:', window.location.origin);
+            console.log('[VIEWER] API Base will be relative:', CONFIG.apiBase);
+        }
+        
+        // Если мы в iframe, не проверяем DevTools (может быть ложное срабатывание)
+        if (!isInIframe) {
+            setInterval(() => {
+                // Увеличиваем порог для более точного определения DevTools
+                const heightDiff = window.outerHeight - window.innerHeight;
+                const widthDiff = window.outerWidth - window.innerWidth;
+                // DevTools обычно открывается снизу или справа, создавая разницу > 200px
+                // Но в некоторых браузерах может быть меньше, поэтому используем более умную проверку
+                if (heightDiff > 200 || widthDiff > 200) {
+                    if (!devtools.open) {
+                        devtools.open = true;
+                        showOverlay('Инструменты разработчика обнаружены');
+                        // Можно также перенаправить или закрыть окно
+                        // window.location.href = 'about:blank';
+                    }
+                } else {
+                    devtools.open = false;
+                }
+            }, 500);
+        } else {
+            console.log('Viewer is in iframe, DevTools detection disabled to avoid false positives');
+        }
+        
+        // Защита от скриншотов (частичная)
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'PrintScreen') {
+                navigator.clipboard.writeText('');
+                showOverlay('Скриншот заблокирован');
+            }
+        });
+        
+        // Blur при потере фокуса
+        let blurTimeout;
+        window.addEventListener('blur', () => {
+            blurTimeout = setTimeout(() => {
+                document.body.style.filter = 'blur(5px)';
+            }, 1000);
+        });
+        
+        window.addEventListener('focus', () => {
+            if (blurTimeout) {
+                clearTimeout(blurTimeout);
+            }
+            document.body.style.filter = 'none';
+        });
+        
+        // Защита от drag & drop
+        document.addEventListener('dragstart', (e) => {
+            e.preventDefault();
+            return false;
+        });
+        
+        document.addEventListener('drop', (e) => {
+            e.preventDefault();
+            return false;
+        });
+        
+        // Функции просмотра
+        async function loadDocument() {
+            try {
+                console.log('[VIEWER] Loading document info...');
+                console.log('[VIEWER] API Base:', CONFIG.apiBase);
+                console.log('[VIEWER] Token:', CONFIG.token);
+                const infoUrl = `${CONFIG.apiBase}/viewer/info?token=${CONFIG.token}`;
+                console.log('[VIEWER] Info URL:', infoUrl);
+                
+                const response = await fetch(infoUrl);
+                console.log('[VIEWER] Response status:', response.status);
+                console.log('[VIEWER] Response OK:', response.ok);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('[VIEWER] Response error:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const data = await response.json();
+                console.log('[VIEWER] Document data:', data);
+                console.log('[VIEWER] Total pages:', data.total_pages);
+                
+                CONFIG.documentId = data.document_id;
+                CONFIG.totalPages = data.total_pages || 1;
+                CONFIG.watermarkSettings = data.watermark_settings;
+                CONFIG.watermarkData = {
+                    user_email: data.user_email,
+                    user_id: data.user_id,
+                    ip_address: data.ip_address
+                };
+                
+                console.log('[VIEWER] Config updated. Total pages:', CONFIG.totalPages);
+                updatePageInfo();
+                loadPage(CONFIG.currentPage);
+            } catch (error) {
+                console.error('[VIEWER] Ошибка загрузки документа:', error);
+                console.error('[VIEWER] Error details:', error.message, error.stack);
+                showOverlay('Ошибка загрузки документа: ' + error.message);
+            }
+        }
+        
+        async function loadPage(pageNumber) {
+            if (pageNumber < 1 || pageNumber > CONFIG.totalPages) {
+                return;
+            }
+            
+            // Сбрасываем zoom на 100% при загрузке новой страницы
+            CONFIG.zoomLevel = 1.0;
+            document.getElementById('zoomLevel').textContent = '100%';
+            
+            // Останавливаем анимацию водяного знака перед загрузкой новой страницы
+            stopWatermarkAnimation();
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('pageContainer').style.display = 'none';
+            
+            try {
+                // TODO: Загрузить изображение страницы через API
+                // const imageUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+                
+                // Временный URL для тестирования
+                const imageUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+                
+                const img = document.getElementById('pageImage');
+                const container = document.getElementById('pageContainer');
+                
+                img.onload = () => {
+                    // Устанавливаем размер изображения для заполнения всей доступной области
+                    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                        // Устанавливаем начальный zoom на 100% (оригинальный размер)
+                        CONFIG.zoomLevel = 1.0;
+                        document.getElementById('zoomLevel').textContent = '100%';
+                        
+                        // Функция для вычисления оптимального масштаба (используется только при resize)
+                        function calculateOptimalScale() {
+                            const toolbar = document.querySelector('.toolbar');
+                            const toolbarHeight = toolbar ? toolbar.offsetHeight : 60;
+                            const viewportWidth = window.innerWidth;
+                            const viewportHeight = window.innerHeight - toolbarHeight;
+                            
+                            // Вычисляем масштаб, чтобы изображение полностью поместилось
+                            const scaleX = viewportWidth / img.naturalWidth;
+                            const scaleY = viewportHeight / img.naturalHeight;
+                            
+                            // Выбираем меньший масштаб, чтобы изображение полностью поместилось без скролла
+                            return Math.min(scaleX, scaleY);
+                        }
+                        
+                        // Изображение будет масштабироваться через transform в applyZoom
+                        img.style.width = img.naturalWidth + 'px';
+                        img.style.height = img.naturalHeight + 'px';
+                        
+                        // Устанавливаем абсолютное позиционирование для центрирования
+                        img.style.position = 'absolute';
+                        img.style.top = '50%';
+                        img.style.left = '50%';
+                        
+                        // Устанавливаем размер контейнера равным размеру viewport (не масштабированному)
+                        // Это предотвратит появление скроллбаров
+                        container.style.width = '100%';
+                        container.style.height = '100%';
+                        container.style.margin = '0';
+                        container.style.padding = '0';
+                        container.style.maxWidth = '100%';
+                        container.style.maxHeight = '100%';
+                        container.style.background = 'transparent';
+                        container.style.position = 'relative';
+                        
+                        // Добавляем обработчик изменения размера окна для автоматического пересчета масштаба
+                        // Используем глобальную переменную, чтобы не добавлять несколько обработчиков
+                        // При resize НЕ меняем масштаб автоматически, пользователь может сам изменить через кнопки
+                        if (!window.viewerResizeHandler) {
+                            let resizeTimeout;
+                            window.viewerResizeHandler = () => {
+                                clearTimeout(resizeTimeout);
+                                resizeTimeout = setTimeout(() => {
+                                    // При изменении размера окна просто применяем текущий zoom
+                                    // Масштаб остается таким, каким его установил пользователь
+                                    applyZoom();
+                                }, 100);
+                            };
+                            window.addEventListener('resize', window.viewerResizeHandler);
+                        }
+                    }
+                    
+                    document.getElementById('loading').style.display = 'none';
+                    container.style.display = 'block';
+                    
+                    // Применяем текущий zoom
+                    applyZoom();
+                    
+                    // Небольшая задержка для применения zoom перед инициализацией водяного знака
+                    setTimeout(() => {
+                        console.log('Page loaded, initializing watermark animation');
+                        initWatermarkAnimation();
+                    }, 500);
+                };
+                img.onerror = () => {
+                    showOverlay('Ошибка загрузки страницы');
+                };
+                img.src = imageUrl;
+                
+                CONFIG.currentPage = pageNumber;
+                updatePageInfo();
+                
+                // Предзагрузка следующей страницы
+                if (pageNumber < CONFIG.totalPages) {
+                    preloadPage(pageNumber + 1);
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки страницы:', error);
+                showOverlay('Ошибка загрузки страницы');
+            }
+        }
+        
+        function preloadPage(pageNumber) {
+            const img = new Image();
+            img.src = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+        }
+        
+        function previousPage() {
+            if (CONFIG.currentPage > 1) {
+                loadPage(CONFIG.currentPage - 1);
+            }
+        }
+        
+        function nextPage() {
+            if (CONFIG.currentPage < CONFIG.totalPages) {
+                loadPage(CONFIG.currentPage + 1);
+            }
+        }
+        
+        function zoomIn() {
+            CONFIG.zoomLevel = Math.min(CONFIG.zoomLevel + 0.1, 3.0);
+            applyZoom();
+        }
+        
+        function zoomOut() {
+            CONFIG.zoomLevel = Math.max(CONFIG.zoomLevel - 0.1, 0.5);
+            applyZoom();
+        }
+        
+        function applyZoom() {
+            const img = document.getElementById('pageImage');
+            if (!img || !img.complete) {
+                return;
+            }
+            
+            // Применяем zoom через transform с центрированием
+            // Используем translate(-50%, -50%) для центрирования + scale для масштабирования
+            img.style.transform = `translate(-50%, -50%) scale(${CONFIG.zoomLevel})`;
+            img.style.transformOrigin = 'center center';
+            
+            // Применяем тот же zoom к canvas водяного знака
+            if (watermarkCanvas) {
+                watermarkCanvas.style.transform = `translate(-50%, -50%) scale(${CONFIG.zoomLevel})`;
+                watermarkCanvas.style.transformOrigin = 'center center';
+            }
+            
+            // Контейнер остается на 100% размера viewport, масштабирование через transform
+            const container = document.getElementById('pageContainer');
+            if (container) {
+                // Контейнер всегда занимает 100% размера, чтобы не было скроллбаров
+                container.style.width = '100%';
+                container.style.height = '100%';
+                container.style.margin = '0';
+                container.style.padding = '0';
+                container.style.maxWidth = '100%';
+                container.style.maxHeight = '100%';
+                container.style.background = 'transparent';
+            }
+            
+            document.getElementById('zoomLevel').textContent = Math.round(CONFIG.zoomLevel * 100) + '%';
+            
+            // Обновляем размер canvas при изменении zoom (если он инициализирован)
+            if (watermarkCanvas && watermarkCtx) {
+                // Небольшая задержка для применения transform перед обновлением размера
+                setTimeout(() => {
+                    updateCanvasSize();
+                }, 50);
+            }
+        }
+        
+        function updatePageInfo() {
+            document.getElementById('pageInfo').textContent = 
+                `Страница ${CONFIG.currentPage} из ${CONFIG.totalPages}`;
+        }
+        
+        function showOverlay(message) {
+            const overlay = document.getElementById('overlay');
+            const messageEl = overlay.querySelector('p');
+            if (messageEl) {
+                messageEl.textContent = message;
+            }
+            overlay.classList.add('active');
+        }
+        
+        function closeOverlay() {
+            document.getElementById('overlay').classList.remove('active');
+        }
+        
+        // Навигация клавиатурой
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') {
+                previousPage();
+            } else if (e.key === 'ArrowRight') {
+                nextPage();
+            } else if (e.key === '+' || e.key === '=') {
+                zoomIn();
+            } else if (e.key === '-') {
+                zoomOut();
+            }
+        });
+        
+        // Функция обновления размера canvas водяного знака
+        function updateCanvasSize() {
+            if (!watermarkCanvas || !watermarkCtx) {
+                return;
+            }
+            
+            const img = document.getElementById('pageImage');
+            if (!img) {
+                return;
+            }
+            
+            // Ждем загрузки изображения
+            if (img.complete && img.naturalWidth > 0) {
+                // Используем натуральные размеры изображения для canvas
+                const naturalWidth = img.naturalWidth;
+                const naturalHeight = img.naturalHeight;
+                
+                // Canvas должен совпадать с натуральным размером изображения
+                // CSS transform будет применен в applyZoom() для центрирования и масштабирования
+                watermarkCanvas.style.position = 'absolute';
+                watermarkCanvas.style.top = '50%';
+                watermarkCanvas.style.left = '50%';
+                watermarkCanvas.style.width = naturalWidth + 'px';
+                watermarkCanvas.style.height = naturalHeight + 'px';
+                
+                // Устанавливаем внутреннее разрешение canvas для четкости отрисовки
+                // Используем натуральный размер для лучшего качества
+                watermarkCanvas.width = naturalWidth;
+                watermarkCanvas.height = naturalHeight;
+                
+                // Сбрасываем трансформацию контекста
+                watermarkCtx.setTransform(1, 0, 0, 1, 0, 0);
+                
+                console.log('Canvas size updated:', naturalWidth, 'x', naturalHeight);
+                
+                // Перегенерируем позиции при изменении размера
+                generateWatermarkPositions();
+                
+                // Запускаем анимацию после обновления размера
+                startWatermarkAnimation();
+            } else {
+                console.log('Image not complete yet, naturalWidth:', img.naturalWidth);
+            }
+        }
+        
+        // Анимация водяного знака
+        function initWatermarkAnimation() {
+            console.log('initWatermarkAnimation called');
+            console.log('CONFIG.watermarkSettings:', CONFIG.watermarkSettings);
+            
+            if (!CONFIG.watermarkSettings) {
+                console.log('Watermark settings not loaded yet');
+                return;
+            }
+            
+            if (!CONFIG.watermarkSettings.dynamic_watermark_enabled) {
+                console.log('Dynamic watermark is disabled in settings');
+                return;
+            }
+            
+            watermarkCanvas = document.getElementById('watermarkCanvas');
+            if (!watermarkCanvas) {
+                console.error('Watermark canvas element not found!');
+                return;
+            }
+            
+            watermarkCtx = watermarkCanvas.getContext('2d');
+            if (!watermarkCtx) {
+                console.error('Could not get 2d context from canvas!');
+                return;
+            }
+            
+            const img = document.getElementById('pageImage');
+            const container = document.getElementById('pageContainer');
+            
+            if (!img || !container) {
+                console.error('Image or container not found!');
+                return;
+            }
+            
+            // Обновляем размер при загрузке изображения
+            if (img.complete && img.naturalWidth > 0) {
+                updateCanvasSize();
+            } else {
+                img.addEventListener('load', () => {
+                    console.log('Image loaded, updating canvas size');
+                    setTimeout(updateCanvasSize, 100);
+                });
+            }
+            
+            // Также обновляем при изменении размера окна
+            let resizeTimeout;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimeout);
+                resizeTimeout = setTimeout(updateCanvasSize, 100);
+            });
+        }
+        
+        function generateWatermarkPositions() {
+            const settings = CONFIG.watermarkSettings;
+            console.log('generateWatermarkPositions called, random_positions_enabled:', settings?.random_positions_enabled);
+            
+            if (!settings || !settings.random_positions_enabled) {
+                watermarkPositions = [];
+                console.log('Random positions disabled, clearing positions');
+                return;
+            }
+            
+            if (!watermarkCtx || !watermarkCanvas) {
+                console.error('Canvas context not available');
+                return;
+            }
+            
+            const count = settings.positions_count || 5;
+            const seed = CONFIG.watermarkData.user_id || CONFIG.watermarkData.user_email || CONFIG.token;
+            
+            console.log('Generating', count, 'positions with seed:', seed);
+            
+            // Детерминированный рандом на основе seed
+            const seedHash = hashString(seed);
+            const rng = seededRandom(seedHash);
+            
+            const img = document.getElementById('pageImage');
+            if (!img) {
+                console.error('Image element not found');
+                return;
+            }
+            
+            // Используем натуральный размер изображения для позиционирования
+            // так как canvas теперь использует натуральный размер
+            const naturalWidth = img.naturalWidth;
+            const naturalHeight = img.naturalHeight;
+            
+            if (naturalWidth === 0 || naturalHeight === 0) {
+                console.log('Image natural size is zero, cannot generate positions');
+                return;
+            }
+            
+            // Получаем размер текста водяного знака
+            const watermarkText = buildWatermarkText();
+            if (!watermarkText) {
+                watermarkPositions = [];
+                console.log('No watermark text to display');
+                return;
+            }
+            
+            // Используем размер canvas для расчета позиций
+            const baseFontSize = settings.font_size || 48;
+            
+            watermarkCtx.font = `${baseFontSize}px Arial`;
+            const textMetrics = watermarkCtx.measureText(watermarkText);
+            const textWidth = textMetrics.width;
+            const textHeight = baseFontSize;
+            
+            console.log('Watermark text:', watermarkText, 'Size:', textWidth, 'x', textHeight);
+            
+            const padding = 50;
+            // Вычисляем допустимые границы с учетом размера текста
+            const minX = Math.max(0, padding);
+            const minY = Math.max(0, padding);
+            const maxX = Math.max(minX, naturalWidth - textWidth - padding);
+            const maxY = Math.max(minY, naturalHeight - textHeight - padding);
+            
+            // Проверяем, что есть место для размещения
+            if (maxX <= minX || maxY <= minY) {
+                console.warn('Not enough space for watermark positions');
+                // Размещаем в центре, если места недостаточно
+                watermarkPositions = [{
+                    x: Math.max(0, Math.min(naturalWidth - textWidth, naturalWidth / 2 - textWidth / 2)),
+                    y: Math.max(0, Math.min(naturalHeight - textHeight, naturalHeight / 2 - textHeight / 2))
+                }];
+                return;
+            }
+            
+            watermarkPositions = [];
+            let attempts = 0;
+            const maxAttempts = count * 50; // Увеличиваем количество попыток
+            
+            while (watermarkPositions.length < count && attempts < maxAttempts) {
+                attempts++;
+                const x = rng() * (maxX - minX) + minX;
+                const y = rng() * (maxY - minY) + minY;
+                
+                // Проверяем, что позиция в пределах изображения
+                if (x < 0 || x > naturalWidth - textWidth || y < 0 || y > naturalHeight - textHeight) {
+                    continue;
+                }
+                
+                // Проверяем минимальное расстояние от других позиций
+                let tooClose = false;
+                for (const pos of watermarkPositions) {
+                    const dx = Math.abs(x - pos.x);
+                    const dy = Math.abs(y - pos.y);
+                    const minDistance = Math.min(textWidth, textHeight) * 0.5;
+                    if (dx < minDistance && dy < minDistance) {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                
+                if (!tooClose) {
+                    watermarkPositions.push({ x, y });
+                }
+            }
+            
+            if (watermarkPositions.length === 0) {
+                // Если не удалось сгенерировать, используем центр с проверкой границ
+                const centerX = Math.max(0, Math.min(naturalWidth - textWidth, naturalWidth / 2 - textWidth / 2));
+                const centerY = Math.max(0, Math.min(naturalHeight - textHeight, naturalHeight / 2 - textHeight / 2));
+                watermarkPositions.push({
+                    x: centerX,
+                    y: centerY
+                });
+            }
+            
+            console.log('Generated', watermarkPositions.length, 'positions:', watermarkPositions);
+        }
+        
+        function buildWatermarkText() {
+            const settings = CONFIG.watermarkSettings;
+            const parts = [];
+            
+            if (settings.custom_text) {
+                parts.push(settings.custom_text);
+            }
+            
+            if (settings.show_user_email && CONFIG.watermarkData.user_email) {
+                parts.push(`User: ${CONFIG.watermarkData.user_email}`);
+            } else if (settings.show_user_id && CONFIG.watermarkData.user_id) {
+                parts.push(`ID: ${CONFIG.watermarkData.user_id}`);
+            }
+            
+            if (settings.show_ip_address && CONFIG.watermarkData.ip_address) {
+                parts.push(`IP: ${CONFIG.watermarkData.ip_address}`);
+            }
+            
+            if (settings.show_page_number) {
+                parts.push(`Page: ${CONFIG.currentPage}`);
+            }
+            
+            if (settings.show_timestamp) {
+                const now = new Date();
+                parts.push(now.toLocaleString('ru-RU', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+            }
+            
+            return parts.join(' | ') || '';
+        }
+        
+        function startWatermarkAnimation() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            
+            const settings = CONFIG.watermarkSettings;
+            if (!settings || !settings.dynamic_watermark_enabled) {
+                console.log('Watermark animation: dynamic watermark disabled');
+                return;
+            }
+            
+            if (!settings.random_positions_enabled || watermarkPositions.length === 0) {
+                // Если случайное размещение выключено, рисуем в одной позиции
+                console.log('Watermark animation: random positions disabled, drawing static');
+                drawStaticWatermark();
+                return;
+            }
+            
+            console.log('Starting watermark animation with', watermarkPositions.length, 'positions');
+            
+            let positionIndex = 0;
+            let transitionProgress = 0;
+            const transitionDuration = settings.animation_speed || 2000; // Скорость анимации из настроек
+            let lastTime = performance.now();
+            
+            function animate(currentTime) {
+                if (!watermarkCanvas || !watermarkCtx) {
+                    console.error('Canvas or context not available in animate');
+                    return;
+                }
+                
+                if (watermarkPositions.length === 0) {
+                    console.error('No positions available for animation');
+                    return;
+                }
+                
+                const deltaTime = currentTime - lastTime;
+                lastTime = currentTime;
+                
+                // Очищаем canvas
+                watermarkCtx.clearRect(0, 0, watermarkCanvas.width, watermarkCanvas.height);
+                
+                // Рисуем водяной знак
+                const watermarkText = buildWatermarkText();
+                if (!watermarkText) {
+                    animationFrameId = requestAnimationFrame(animate);
+                    return;
+                }
+                
+                const baseFontSize = settings.font_size || 48;
+                
+                watermarkCtx.font = `${baseFontSize}px Arial`;
+                watermarkCtx.fillStyle = `rgba(${settings.color_r || 128}, ${settings.color_g || 128}, ${settings.color_b || 128}, ${settings.opacity || 0.25})`;
+                
+                // Вычисляем текущую позицию с плавным переходом
+                const currentPos = watermarkPositions[positionIndex];
+                const nextIndex = (positionIndex + 1) % watermarkPositions.length;
+                const nextPos = watermarkPositions[nextIndex];
+                
+                // Плавная интерполяция между позициями
+                const progress = Math.min(transitionProgress / transitionDuration, 1);
+                const easeProgress = easeInOutQuad(progress); // Плавная функция easing
+                
+                let x = currentPos.x + (nextPos.x - currentPos.x) * easeProgress;
+                let y = currentPos.y + (nextPos.y - currentPos.y) * easeProgress;
+                
+                // Получаем размеры текста для проверки границ
+                const textMetrics = watermarkCtx.measureText(watermarkText);
+                const textWidth = textMetrics.width;
+                const textHeight = baseFontSize;
+                
+                // Ограничиваем позицию границами canvas (изображения)
+                const maxX = Math.max(0, watermarkCanvas.width - textWidth);
+                const maxY = Math.max(0, watermarkCanvas.height - textHeight);
+                const minX = 0;
+                const minY = 0;
+                
+                // Применяем ограничения
+                x = Math.max(minX, Math.min(maxX, x));
+                y = Math.max(minY, Math.min(maxY, y));
+                
+                // Рисуем текст (y координата уже включает font_size для baseline)
+                watermarkCtx.fillText(watermarkText, x, y + baseFontSize);
+                
+                // Переход к следующей позиции
+                transitionProgress += deltaTime;
+                if (transitionProgress >= transitionDuration) {
+                    transitionProgress = 0;
+                    positionIndex = nextIndex;
+                    console.log('Moving to position', positionIndex, 'of', watermarkPositions.length);
+                }
+                
+                animationFrameId = requestAnimationFrame(animate);
+            }
+            
+            animationFrameId = requestAnimationFrame(animate);
+        }
+        
+        function drawStaticWatermark() {
+            if (!watermarkCanvas || !watermarkCtx) {
+                return;
+            }
+            
+            const settings = CONFIG.watermarkSettings;
+            const watermarkText = buildWatermarkText();
+            if (!watermarkText) {
+                return;
+            }
+            
+            const baseFontSize = settings.font_size || 48;
+            watermarkCtx.font = `${baseFontSize}px Arial`;
+            watermarkCtx.fillStyle = `rgba(${settings.color_r || 128}, ${settings.color_g || 128}, ${settings.color_b || 128}, ${settings.opacity || 0.25})`;
+            
+            // Вычисляем размеры текста
+            const textMetrics = watermarkCtx.measureText(watermarkText);
+            const textWidth = textMetrics.width;
+            const textHeight = baseFontSize;
+            
+            // Используем размеры canvas для позиционирования
+            const canvasWidth = watermarkCanvas.width;
+            const canvasHeight = watermarkCanvas.height;
+            const padding = 10;
+            
+            let x, y;
+            
+            if (settings.position === 'center') {
+                x = (canvasWidth - textWidth) / 2;
+                y = (canvasHeight - textHeight) / 2;
+            } else if (settings.position === 'top-left') {
+                x = padding;
+                y = padding;
+            } else if (settings.position === 'top-right') {
+                x = canvasWidth - textWidth - padding;
+                y = padding;
+            } else if (settings.position === 'bottom-left') {
+                x = padding;
+                y = canvasHeight - textHeight - padding;
+            } else if (settings.position === 'bottom-right') {
+                x = canvasWidth - textWidth - padding;
+                y = canvasHeight - textHeight - padding;
+            } else {
+                // По умолчанию - центр
+                x = (canvasWidth - textWidth) / 2;
+                y = (canvasHeight - textHeight) / 2;
+            }
+            
+            // Ограничиваем позицию границами canvas (гарантируем, что текст не выходит за пределы)
+            x = Math.max(0, Math.min(canvasWidth - textWidth, x));
+            y = Math.max(0, Math.min(canvasHeight - textHeight, y));
+            
+            watermarkCtx.fillText(watermarkText, x, y + textHeight);
+        }
+        
+        // Функция плавного перехода (easing)
+        function easeInOutQuad(t) {
+            return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        }
+        
+        function stopWatermarkAnimation() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (watermarkCtx) {
+                watermarkCtx.clearRect(0, 0, watermarkCanvas.width, watermarkCanvas.height);
+            }
+        }
+        
+        // Вспомогательные функции для детерминированного рандома
+        function hashString(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32bit integer
+            }
+            return Math.abs(hash);
+        }
+        
+        function seededRandom(seed) {
+            let value = seed;
+            return function() {
+                value = (value * 9301 + 49297) % 233280;
+                return value / 233280;
+            };
+        }
+        
+        // Инициализация
+        window.addEventListener('load', () => {
+            console.log('[VIEWER] Window loaded, initializing...');
+            console.log('[VIEWER] Current URL:', window.location.href);
+            console.log('[VIEWER] Token from URL:', CONFIG.token);
+            console.log('[VIEWER] API Base:', CONFIG.apiBase);
+            
+            if (!CONFIG.token) {
+                console.error('[VIEWER] No token found in URL!');
+                showOverlay('Токен не найден в URL');
+                return;
+            }
+            
+            loadDocument();
+        });
+        
+        // Защита от закрытия через закрытие вкладки (опционально)
+        window.addEventListener('beforeunload', (e) => {
+            stopWatermarkAnimation();
+            e.preventDefault();
+            e.returnValue = '';
+        });
+    </script>
+</body>
+</html>

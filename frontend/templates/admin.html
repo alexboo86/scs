@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель - Secure Content Service</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 24px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #ddd;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-size: 16px;
+            color: #666;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            color: #2c3e50;
+            border-bottom-color: #2c3e50;
+            font-weight: 600;
+        }
+        
+        .tab-content {
+            display: none;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        .section h2 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+            font-size: 20px;
+        }
+        
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .btn-success {
+            background: #27ae60;
+        }
+        
+        .btn-success:hover {
+            background: #229954;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        input[type="file"],
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔐 Админ-панель Secure Content Service</h1>
+    </div>
+    
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('documents')">Документы</button>
+            <button class="tab" onclick="showTab('upload')">Загрузка</button>
+            <button class="tab" onclick="showTab('watermark')">Водяные знаки</button>
+        </div>
+        
+        <!-- Вкладка Документы -->
+        <div id="documents" class="tab-content active">
+            <div class="section">
+                <h2>Список документов</h2>
+                <div id="documentsList"></div>
+            </div>
+        </div>
+        
+        <!-- Вкладка Загрузка -->
+        <div id="upload" class="tab-content">
+            <div class="section">
+                <h2>Загрузка документа</h2>
+                <form id="uploadForm" onsubmit="uploadDocument(event)">
+                    <div class="form-group">
+                        <label>Файл (PDF, PPT, PPTX):</label>
+                        <input type="file" id="fileInput" accept=".pdf,.ppt,.pptx" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Название:</label>
+                        <input type="text" id="documentName" placeholder="Название документа">
+                    </div>
+                    <button type="submit" class="btn btn-success">Загрузить</button>
+                </form>
+                <div id="uploadResult"></div>
+            </div>
+        </div>
+        
+        <!-- Вкладка Водяные знаки -->
+        <div id="watermark" class="tab-content">
+            <div class="section">
+                <h2>Глобальные настройки водяных знаков</h2>
+                <p style="color: #666; margin-bottom: 20px;">Эти настройки применяются ко всем документам</p>
+                
+                <div id="watermarkSettings">
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Статический водяной знак</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="staticEnabled" onchange="updateWatermarkForm()">
+                            Включить статический водяной знак
+                        </label>
+                    </div>
+                    <div id="staticSettings" style="display: none; margin-left: 20px;">
+                        <div class="form-group">
+                            <label>Масштаб (0.1 - 1.0):</label>
+                            <input type="number" id="staticScale" min="0.1" max="1.0" step="0.1" value="0.2">
+                        </div>
+                    </div>
+                    
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Динамический водяной знак</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="dynamicEnabled" onchange="updateWatermarkForm()">
+                            Включить динамический водяной знак
+                        </label>
+                    </div>
+                    <div id="dynamicSettings" style="display: none; margin-left: 20px;">
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="showEmail">
+                                Показывать email пользователя
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="showIP">
+                                Показывать IP адрес
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="showTimestamp">
+                                Показывать время просмотра
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="showPageNumber">
+                                Показывать номер страницы
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>Дополнительный текст:</label>
+                            <input type="text" id="customText" placeholder="Дополнительный текст">
+                        </div>
+                    </div>
+                    
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Стиль</h3>
+                    <div class="form-group">
+                        <label>Прозрачность (0.0 - 1.0):</label>
+                        <input type="number" id="opacity" min="0" max="1" step="0.05" value="0.25">
+                    </div>
+                    <div class="form-group">
+                        <label>Размер шрифта:</label>
+                        <input type="number" id="fontSize" min="12" max="200" value="48">
+                    </div>
+                    <div class="form-group">
+                        <label>Цвет (RGB):</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="colorR" min="0" max="255" value="128" placeholder="R" style="width: 80px;">
+                            <input type="number" id="colorG" min="0" max="255" value="128" placeholder="G" style="width: 80px;">
+                            <input type="number" id="colorB" min="0" max="255" value="128" placeholder="B" style="width: 80px;">
+                        </div>
+                    </div>
+                    <h3 style="margin-top: 20px; margin-bottom: 15px;">Размещение</h3>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="randomPositionsEnabled" checked>
+                            Случайное размещение (водяной знак "прыгает" по странице)
+                        </label>
+                    </div>
+                    <div id="randomPositionsSettings" style="margin-left: 20px;">
+                        <div class="form-group">
+                            <label>Количество позиций на странице:</label>
+                            <input type="number" id="positionsCount" min="1" max="20" value="5" style="width: 100px;">
+                            <small style="display: block; color: #666; margin-top: 5px;">
+                                Водяной знак будет "прыгать" между случайными позициями в реальном времени
+                            </small>
+                        </div>
+                        <div class="form-group">
+                            <label>Скорость анимации (мс):</label>
+                            <input type="number" id="animationSpeed" min="500" max="10000" step="100" value="2000" style="width: 120px;">
+                            <small style="display: block; color: #666; margin-top: 5px;">
+                                Время перехода между позициями (500-10000 мс). Меньше = быстрее
+                            </small>
+                        </div>
+                    </div>
+                    <div class="form-group" id="singlePositionSettings" style="display: none; margin-left: 20px;">
+                        <label>Позиция (если случайное размещение выключено):</label>
+                        <select id="position">
+                            <option value="center">Центр</option>
+                            <option value="top-left">Верхний левый</option>
+                            <option value="top-right">Верхний правый</option>
+                            <option value="bottom-left">Нижний левый</option>
+                            <option value="bottom-right">Нижний правый</option>
+                        </select>
+                    </div>
+                    
+                    <div style="margin-top: 30px; display: flex; gap: 15px; align-items: center;">
+                        <button class="btn btn-success" onclick="saveWatermarkSettings()">Сохранить настройки</button>
+                        <button class="btn" onclick="updatePreview()" style="background: #17a2b8; color: white;">Обновить предпросмотр</button>
+                    </div>
+                    
+                    <div id="watermarkResult" style="margin-top: 15px;"></div>
+                    
+                    <h3 style="margin-top: 30px; margin-bottom: 15px;">Предпросмотр</h3>
+                    <div style="border: 2px solid #ddd; padding: 20px; background: #f9f9f9; text-align: center;">
+                        <img id="watermarkPreview" src="" alt="Предпросмотр водяных знаков" style="max-width: 100%; border: 1px solid #ccc; background: white; display: none;">
+                        <div id="previewLoading" style="display: none; color: #666;">Загрузка предпросмотра...</div>
+                        <div id="previewPlaceholder" style="color: #999;">Нажмите "Обновить предпросмотр" чтобы увидеть результат</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        
+        // Инициализация
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDocuments();
+            loadGlobalWatermarkSettings();
+        });
+        
+        // Переключение вкладок
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+            
+            // При открытии вкладки водяных знаков загружаем настройки и предпросмотр
+            if (tabName === 'watermark') {
+                loadGlobalWatermarkSettings();
+            }
+        }
+        
+        // ========== ОТКРЫТИЕ VIEWER ==========
+        async function openViewer(documentToken) {
+            try {
+                // Создаем viewer token через API
+                const response = await fetch(`${API_BASE}/api/viewer/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        document_token: documentToken
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    // Открываем viewer с полученным токеном
+                    window.open(`${API_BASE}${data.viewer_url}`, '_blank');
+                } else {
+                    const error = await response.json();
+                    alert('Ошибка создания viewer token: ' + (error.detail || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        }
+        
+        // ========== УДАЛЕНИЕ ДОКУМЕНТОВ ==========
+        async function deleteDocument(docId, docName) {
+            if (!confirm(`Удалить документ "${docName}" (ID: ${docId})?\n\nЭто действие нельзя отменить!`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/documents/${docId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    showAlert('documentsList', 'Документ удален успешно', 'success');
+                    loadDocuments();
+                } else {
+                    const error = await response.json();
+                    alert('Ошибка удаления: ' + (error.detail || 'Неизвестная ошибка'));
+                }
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        }
+        
+        // ========== ВОДЯНЫЕ ЗНАКИ ==========
+        // ========== ГЛОБАЛЬНЫЕ ВОДЯНЫЕ ЗНАКИ ==========
+        async function loadGlobalWatermarkSettings() {
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/watermark/global`);
+                const settings = await response.json();
+                
+                // Статический водяной знак
+                document.getElementById('staticEnabled').checked = settings.static_watermark_enabled || false;
+                document.getElementById('staticScale').value = settings.static_watermark_scale || 0.2;
+                
+                // Динамический водяной знак
+                document.getElementById('dynamicEnabled').checked = settings.dynamic_watermark_enabled || false;
+                document.getElementById('showEmail').checked = settings.show_user_email || false;
+                document.getElementById('showIP').checked = settings.show_ip_address || false;
+                document.getElementById('showTimestamp').checked = settings.show_timestamp || false;
+                document.getElementById('showPageNumber').checked = settings.show_page_number || false;
+                document.getElementById('customText').value = settings.custom_text || '';
+                
+                // Стиль
+                document.getElementById('opacity').value = settings.opacity || 0.25;
+                document.getElementById('fontSize').value = settings.font_size || 48;
+                document.getElementById('colorR').value = settings.color_r || 128;
+                document.getElementById('colorG').value = settings.color_g || 128;
+                document.getElementById('colorB').value = settings.color_b || 128;
+                
+                // Размещение
+                const randomEnabled = settings.random_positions_enabled !== undefined ? settings.random_positions_enabled : true;
+                document.getElementById('randomPositionsEnabled').checked = randomEnabled;
+                document.getElementById('positionsCount').value = settings.positions_count || 5;
+                document.getElementById('animationSpeed').value = settings.animation_speed || 2000;
+                document.getElementById('position').value = settings.position || 'center';
+                updateRandomPositionsForm();
+                
+                updateWatermarkForm();
+                updatePreview(); // Автоматически обновляем предпросмотр при загрузке
+            } catch (error) {
+                showAlert('watermarkResult', 'Ошибка загрузки настроек: ' + error.message, 'error');
+            }
+        }
+        
+        function updateWatermarkForm() {
+            const staticEnabled = document.getElementById('staticEnabled').checked;
+            const dynamicEnabled = document.getElementById('dynamicEnabled').checked;
+            
+            document.getElementById('staticSettings').style.display = staticEnabled ? 'block' : 'none';
+            document.getElementById('dynamicSettings').style.display = dynamicEnabled ? 'block' : 'none';
+        }
+        
+        function updateRandomPositionsForm() {
+            const randomEnabled = document.getElementById('randomPositionsEnabled').checked;
+            document.getElementById('randomPositionsSettings').style.display = randomEnabled ? 'block' : 'none';
+            document.getElementById('singlePositionSettings').style.display = randomEnabled ? 'none' : 'block';
+        }
+        
+        async function saveWatermarkSettings() {
+            const settings = {
+                static_watermark_enabled: document.getElementById('staticEnabled').checked,
+                static_watermark_scale: parseFloat(document.getElementById('staticScale').value),
+                dynamic_watermark_enabled: document.getElementById('dynamicEnabled').checked,
+                show_user_email: document.getElementById('showEmail').checked,
+                show_ip_address: document.getElementById('showIP').checked,
+                show_timestamp: document.getElementById('showTimestamp').checked,
+                show_page_number: document.getElementById('showPageNumber').checked,
+                custom_text: document.getElementById('customText').value,
+                opacity: parseFloat(document.getElementById('opacity').value),
+                font_size: parseInt(document.getElementById('fontSize').value),
+                color_r: parseInt(document.getElementById('colorR').value),
+                color_g: parseInt(document.getElementById('colorG').value),
+                color_b: parseInt(document.getElementById('colorB').value),
+                position: document.getElementById('position').value,
+                random_positions_enabled: document.getElementById('randomPositionsEnabled').checked,
+                positions_count: parseInt(document.getElementById('positionsCount').value),
+                animation_speed: parseInt(document.getElementById('animationSpeed').value)
+            };
+            
+            try {
+                const formData = new FormData();
+                formData.append('watermark_settings', JSON.stringify(settings));
+                
+                const response = await fetch(`${API_BASE}/api/admin/watermark/global`, {
+                    method: 'PUT',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showAlert('watermarkResult', 'Глобальные настройки сохранены успешно! Кеш всех документов очищен.', 'success');
+                    updatePreview(); // Обновляем предпросмотр после сохранения
+                } else {
+                    showAlert('watermarkResult', 'Ошибка: ' + (result.detail || 'Неизвестная ошибка'), 'error');
+                }
+            } catch (error) {
+                showAlert('watermarkResult', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+        
+        async function updatePreview() {
+            const previewImg = document.getElementById('watermarkPreview');
+            const previewLoading = document.getElementById('previewLoading');
+            const previewPlaceholder = document.getElementById('previewPlaceholder');
+            
+            previewImg.style.display = 'none';
+            previewPlaceholder.style.display = 'none';
+            previewLoading.style.display = 'block';
+            
+            try {
+                // Сначала сохраняем текущие настройки (чтобы предпросмотр использовал их)
+                const settings = {
+                    static_watermark_enabled: document.getElementById('staticEnabled').checked,
+                    static_watermark_scale: parseFloat(document.getElementById('staticScale').value),
+                    dynamic_watermark_enabled: document.getElementById('dynamicEnabled').checked,
+                    show_user_email: document.getElementById('showEmail').checked,
+                    show_ip_address: document.getElementById('showIP').checked,
+                    show_timestamp: document.getElementById('showTimestamp').checked,
+                    show_page_number: document.getElementById('showPageNumber').checked,
+                    custom_text: document.getElementById('customText').value,
+                    opacity: parseFloat(document.getElementById('opacity').value),
+                    font_size: parseInt(document.getElementById('fontSize').value),
+                    color_r: parseInt(document.getElementById('colorR').value),
+                    color_g: parseInt(document.getElementById('colorG').value),
+                    color_b: parseInt(document.getElementById('colorB').value),
+                    position: document.getElementById('position').value,
+                    random_positions_enabled: document.getElementById('randomPositionsEnabled').checked,
+                    positions_count: parseInt(document.getElementById('positionsCount').value),
+                    animation_speed: parseInt(document.getElementById('animationSpeed').value)
+                };
+                
+                // Сохраняем временно для предпросмотра
+                const formData = new FormData();
+                formData.append('watermark_settings', JSON.stringify(settings));
+                await fetch(`${API_BASE}/api/admin/watermark/global`, {
+                    method: 'PUT',
+                    body: formData
+                });
+                
+                // Загружаем предпросмотр
+                const timestamp = new Date().getTime();
+                previewImg.src = `${API_BASE}/api/admin/watermark/preview?t=${timestamp}`;
+                previewImg.onload = () => {
+                    previewLoading.style.display = 'none';
+                    previewImg.style.display = 'block';
+                };
+                previewImg.onerror = () => {
+                    previewLoading.style.display = 'none';
+                    previewPlaceholder.style.display = 'block';
+                    previewPlaceholder.textContent = 'Ошибка загрузки предпросмотра';
+                };
+            } catch (error) {
+                previewLoading.style.display = 'none';
+                previewPlaceholder.style.display = 'block';
+                previewPlaceholder.textContent = 'Ошибка: ' + error.message;
+            }
+        }
+        
+        // Автоматически обновляем предпросмотр при изменении настроек
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputs = ['staticEnabled', 'staticScale', 'dynamicEnabled', 'showEmail', 'showIP', 
+                          'showTimestamp', 'showPageNumber', 'customText', 'opacity', 'fontSize', 
+                          'colorR', 'colorG', 'colorB', 'position', 'randomPositionsEnabled', 'positionsCount', 'animationSpeed'];
+            inputs.forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.addEventListener('change', () => {
+                        if (id === 'randomPositionsEnabled') {
+                            updateRandomPositionsForm();
+                        }
+                        // Обновляем предпросмотр с задержкой (debounce)
+                        clearTimeout(window.previewTimeout);
+                        window.previewTimeout = setTimeout(updatePreview, 500);
+                    });
+                }
+            });
+            
+            // Инициализируем форму случайного размещения
+            updateRandomPositionsForm();
+        });
+        
+        // ========== ДОКУМЕНТЫ ==========
+        async function loadDocuments() {
+            try {
+                const response = await fetch(`${API_BASE}/api/documents/`);
+                const documents = await response.json();
+                
+                if (documents.length === 0) {
+                    document.getElementById('documentsList').innerHTML = '<p>Документов нет. Загрузите через вкладку "Загрузка"</p>';
+                    return;
+                }
+                
+                let html = '<table><thead><tr><th>ID</th><th>Название</th><th>Тип</th><th>Страниц</th><th>Access Token</th><th>Создан</th><th>Действия</th></tr></thead><tbody>';
+                documents.forEach(doc => {
+                    html += `
+                        <tr>
+                            <td>${doc.id}</td>
+                            <td>${doc.name}</td>
+                            <td>${doc.file_type.toUpperCase()}</td>
+                            <td>${doc.total_pages}</td>
+                            <td><code style="font-size: 11px;">${doc.access_token.substring(0, 20)}...</code></td>
+                            <td>${new Date(doc.created_at).toLocaleString('ru-RU')}</td>
+                            <td>
+                                <div class="actions">
+                                    <button class="btn" onclick="openViewer('${doc.access_token}')">Открыть</button>
+                                    <button class="btn btn-danger" onclick="deleteDocument(${doc.id}, '${doc.name}')">Удалить</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+                html += '</tbody></table>';
+                document.getElementById('documentsList').innerHTML = html;
+            } catch (error) {
+                showAlert('documentsList', 'Ошибка загрузки документов: ' + error.message, 'error');
+            }
+        }
+        
+        
+        // ========== ЗАГРУЗКА ==========
+        async function uploadDocument(event) {
+            event.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            const nameInput = document.getElementById('documentName');
+            
+            if (!fileInput.files[0]) {
+                alert('Выберите файл');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            if (nameInput.value) {
+                formData.append('name', nameInput.value);
+            }
+            
+            try {
+                document.getElementById('uploadResult').innerHTML = '<div class="loading">Загрузка...</div>';
+                
+                const response = await fetch(`${API_BASE}/api/documents/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    let html = '<div class="alert alert-success">';
+                    html += '<strong>Документ загружен успешно!</strong><br>';
+                    html += `ID: ${result.id}<br>`;
+                    html += `Название: ${result.name}<br>`;
+                    html += `Страниц: ${result.total_pages}<br>`;
+                    html += `Access Token: <code>${result.access_token}</code><br>`;
+                    html += `<button class="btn" onclick="openViewer('${result.access_token}')" style="margin-top: 10px;">Открыть viewer</button>`;
+                    html += '</div>';
+                    document.getElementById('uploadResult').innerHTML = html;
+                    
+                    fileInput.value = '';
+                    nameInput.value = '';
+                    loadDocuments();
+                } else {
+                    showAlert('uploadResult', 'Ошибка загрузки: ' + (result.detail || 'Неизвестная ошибка'), 'error');
+                }
+            } catch (error) {
+                showAlert('uploadResult', 'Ошибка: ' + error.message, 'error');
+            }
+        }
+        
+        
+        // ========== УТИЛИТЫ ==========
+        function showAlert(containerId, message, type) {
+            const container = document.getElementById(containerId);
+            const alertClass = type === 'success' ? 'alert-success' : 'alert-error';
+            container.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+            
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

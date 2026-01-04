@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Тест iframe</title>
+</head>
+<body>
+    <h1>Тест загрузки iframe</h1>
+    <p>Если этот iframe загружается, значит проблема в Mixed Content (HTTPS -> HTTP)</p>
+    
+    <iframe 
+        src="http://185.88.159.33:8000/api/viewer/embed?document_token=-lsSDMgIfCNYGA8PMvph91Wg2bcppe3oZVfLuQIRi-A"
+        width="100%"
+        height="800px"
+        frameborder="0"
+        style="border: 1px solid red;"
+    ></iframe>
+    
+    <script>
+        console.log('Test page loaded');
+        console.log('Current URL:', window.location.href);
+        console.log('Protocol:', window.location.protocol);
+        
+        // Проверяем доступность сервера
+        fetch('http://185.88.159.33:8000/health', { mode: 'no-cors' })
+            .then(() => console.log('Server is reachable'))
+            .catch(err => console.error('Server unreachable:', err));
+    </script>
+</body>
+</html>

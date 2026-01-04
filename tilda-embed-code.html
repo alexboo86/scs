@@ -1,0 +1,114 @@
+<!-- 
+    КОД ДЛЯ ВСТАИВАНИЯ В TILDA
+    Скопируйте этот код в блок "HTML" на странице Tilda
+-->
+
+<div id="secure-content-viewer"></div>
+
+<script>
+(function() {
+    // ========== НАСТРОЙКИ ==========
+    const CONFIG = {
+        // URL вашего сервиса (без слеша в конце)
+        // Пример: 'https://content.yourschool.com'
+        serviceUrl: 'https://your-content-service.com',
+        
+        // Токен документа (получен при загрузке через API)
+        documentToken: 'YOUR_DOCUMENT_ACCESS_TOKEN',
+        
+        // Email пользователя (из личного кабинета)
+        userEmail: 'user@example.com',
+        
+        // Высота viewer (используется 100vh для адаптивности)
+        height: '100vh'
+    };
+    
+    // ========== ПРОВЕРКА ДАННЫХ ==========
+    if (!CONFIG.documentToken || CONFIG.documentToken === 'YOUR_DOCUMENT_ACCESS_TOKEN') {
+        document.getElementById('secure-content-viewer').innerHTML = 
+            '<div style="text-align: center; padding: 50px; color: #d32f2f; font-family: Arial, sans-serif;">' +
+            '⚠️ Необходимо указать documentToken в настройках' +
+            '</div>';
+        return;
+    }
+    
+    if (!CONFIG.userEmail || CONFIG.userEmail === 'user@example.com') {
+        document.getElementById('secure-content-viewer').innerHTML = 
+            '<div style="text-align: center; padding: 50px; color: #d32f2f; font-family: Arial, sans-serif;">' +
+            '⚠️ Необходимо указать userEmail в настройках' +
+            '</div>';
+        return;
+    }
+    
+    // ========== СОЗДАНИЕ IFRAME ==========
+    const container = document.getElementById('secure-content-viewer');
+    container.style.cssText = 'width: 100%; height: 100vh; min-height: 600px; margin: 0; padding: 0; background: transparent; border: none;';
+    const iframe = document.createElement('iframe');
+    
+    // Формируем URL для embed endpoint
+    const embedUrl = CONFIG.serviceUrl + 
+        '/api/viewer/embed' +
+        '?document_token=' + encodeURIComponent(CONFIG.documentToken) +
+        '&user_email=' + encodeURIComponent(CONFIG.userEmail);
+    
+    iframe.src = embedUrl;
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.style.minHeight = '600px';
+    iframe.style.margin = '0';
+    iframe.style.padding = '0';
+    iframe.style.background = 'transparent';
+    iframe.setAttribute('allowfullscreen', '');
+    iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-popups allow-forms');
+    
+    // Показываем индикатор загрузки
+    container.innerHTML = 
+        '<div style="text-align: center; padding: 50px; color: #666; font-family: Arial, sans-serif;">' +
+        '📄 Загрузка документа...' +
+        '</div>';
+    
+    // Обработка загрузки
+    iframe.onload = function() {
+        container.innerHTML = '';
+        container.appendChild(iframe);
+    };
+    
+    // Обработка ошибок
+    iframe.onerror = function() {
+        container.innerHTML = 
+            '<div style="text-align: center; padding: 50px; color: #d32f2f; font-family: Arial, sans-serif;">' +
+            '❌ Ошибка загрузки документа. Проверьте настройки или обратитесь к администратору.' +
+            '</div>';
+    };
+    
+    // Добавляем iframe (начинаем загрузку)
+    container.appendChild(iframe);
+    
+    // Адаптивность - используем 100vh для всех размеров экрана
+    function adjustHeight() {
+        iframe.style.height = '100%';
+        container.style.height = '100vh';
+    }
+    
+    window.addEventListener('resize', adjustHeight);
+    adjustHeight();
+})();
+</script>
+
+<!-- 
+    ИНСТРУКЦИЯ ПО ИСПОЛЬЗОВАНИЮ:
+    
+    1. Замените 'YOUR_DOCUMENT_ACCESS_TOKEN' на реальный токен документа
+       (полученный при загрузке через API)
+    
+    2. Замените 'user@example.com' на email пользователя
+       (можно получить из личного кабинета или передать динамически)
+    
+    3. Замените 'https://your-content-service.com' на URL вашего сервиса
+    
+    4. Вставьте этот код в блок "HTML" на странице Tilda
+    
+    5. Убедитесь, что домен Tilda добавлен в ALLOWED_EMBED_DOMAINS
+       в настройках сервиса (.env файл)
+-->
