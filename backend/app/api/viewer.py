@@ -585,25 +585,35 @@ async def embed_viewer(
     # Возвращаем HTML с iframe
     viewer_url = f"/viewer?token={viewer_token}"
     
-    # Определяем протокол из заголовков (для работы за Nginx reverse proxy)
-    # Приоритет: X-Forwarded-Proto > Referer > request.url.scheme
-    scheme = request.headers.get("X-Forwarded-Proto", "").lower()
-    
-    # Если заголовок не установлен, проверяем Referer
-    if not scheme:
-        referer = request.headers.get("Referer", "")
-        if referer.startswith("https://"):
-            scheme = "https"
-        else:
-            scheme = request.url.scheme
-    
-    # Если домен lessons.incrypto.ru, всегда используем HTTPS
+    # Получаем host
     host = request.headers.get("Host", request.url.hostname)
-    if "lessons.incrypto.ru" in str(host).lower():
+    
+    # ВСЕГДА используем HTTPS для домена lessons.incrypto.ru
+    if host and "lessons.incrypto.ru" in str(host).lower():
         scheme = "https"
+    else:
+        # Определяем протокол из заголовков (для работы за Nginx reverse proxy)
+        scheme = request.headers.get("X-Forwarded-Proto", "").lower()
+        
+        # Если заголовок не установлен, проверяем Referer
+        if not scheme:
+            referer = request.headers.get("Referer", "")
+            if referer and referer.startswith("https://"):
+                scheme = "https"
+            else:
+                # По умолчанию используем схему из URL запроса
+                scheme = request.url.scheme or "https"
+        
+        # Если схема все еще не определена или http, но запрос идет через HTTPS домен
+        if scheme != "https" and host and ("lessons.incrypto.ru" in str(host).lower() or request.url.scheme == "https"):
+            scheme = "https"
     
     # Формируем base_url с правильным протоколом
     base_url = f"{scheme}://{host}".rstrip('/')
+    
+    # Логирование для отладки
+    print(f"[EMBED] Host: {host}, Scheme: {scheme}, X-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto')}, URL scheme: {request.url.scheme}")
+    print(f"[EMBED] Final base_url: {base_url}")
     
     return HTMLResponse(f"""
     <!DOCTYPE html>
