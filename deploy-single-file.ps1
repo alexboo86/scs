@@ -16,11 +16,11 @@ $PROJECT_PATH = "D:\WORK\secure-content-service"
 $FullPath = Join-Path $PROJECT_PATH $FilePath
 
 if (-not (Test-Path $FullPath)) {
-    Write-Host "[ERROR] Файл не найден: $FullPath" -ForegroundColor Red
+    Write-Host "[ERROR] File not found: $FullPath" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "[INFO] Копирование файла: $FilePath" -ForegroundColor Green
+Write-Host "[INFO] Copying file: $FilePath" -ForegroundColor Green
 
 # Определяем путь на VPS (сохраняем структуру директорий)
 $VPSPath = "~/projects/${PROJECT_DIR}/${FilePath}"
@@ -32,7 +32,7 @@ ssh "${VPS_USER}@${VPS_IP}" "mkdir -p $VPSDir" | Out-Null
 # Копируем файл
 scp $FullPath "${VPS_USER}@${VPS_IP}:${VPSPath}"
 
-Write-Host "[INFO] Перезапуск backend..." -ForegroundColor Green
+Write-Host "[INFO] Restarting backend..." -ForegroundColor Green
 ssh "${VPS_USER}@${VPS_IP}" "cd ~/projects/${PROJECT_DIR} && docker-compose restart backend"
 
-Write-Host "[INFO] Готово! Файл обновлен и сервис перезапущен" -ForegroundColor Green
+Write-Host "[INFO] Done! File updated and service restarted" -ForegroundColor Green

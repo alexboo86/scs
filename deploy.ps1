@@ -31,12 +31,12 @@ function Write-Step {
 }
 
 # Проверка подключения
-Write-Step "Проверка подключения к VPS..."
+Write-Step "Checking VPS connection..."
 try {
     $null = ssh -o ConnectTimeout=5 "${VPS_USER}@${VPS_IP}" "echo 'Connected'" 2>&1
-    Write-Info "Подключение установлено"
+    Write-Info "Connection established"
 } catch {
-    Write-Error "Не удалось подключиться к VPS. Проверьте IP адрес и SSH доступ."
+    Write-Error "Failed to connect to VPS. Check IP address and SSH access."
     exit 1
 }
 
@@ -45,11 +45,11 @@ $PROJECT_PATH = "D:\WORK\secure-content-service"
 
 # Проверка существования пути
 if (-not (Test-Path $PROJECT_PATH)) {
-    Write-Error "Путь к проекту не найден: $PROJECT_PATH"
+    Write-Error "Project path not found: $PROJECT_PATH"
     exit 1
 }
 
-Write-Step "Синхронизация файлов на VPS..."
+Write-Step "Syncing files to VPS..."
 
 # Используем scp для копирования (rsync может быть недоступен в Windows)
 # Копируем основные директории
@@ -64,7 +64,7 @@ $directories = @(
 foreach ($dir in $directories) {
     $source = Join-Path $PROJECT_PATH $dir
     if (Test-Path $source) {
-        Write-Host "  Копирование: $dir"
+        Write-Host "  Copying: $dir"
         if (Test-Path $source -PathType Container) {
             scp -r "${source}\*" "${VPS_USER}@${VPS_IP}:~/projects/${PROJECT_DIR}/${dir}/"
         } else {
@@ -83,29 +83,29 @@ $files = @(
 foreach ($file in $files) {
     $source = Join-Path $PROJECT_PATH $file
     if (Test-Path $source) {
-        Write-Host "  Копирование: $file"
+        Write-Host "  Copying: $file"
         scp $source "${VPS_USER}@${VPS_IP}:~/projects/${PROJECT_DIR}/"
     }
 }
 
-Write-Info "Файлы скопированы на VPS"
+Write-Info "Files copied to VPS"
 
 # Выполняем команды на VPS
-Write-Step "Пересборка и перезапуск контейнера..."
+Write-Step "Rebuilding and restarting container..."
 
 $commands = @"
 cd ~/projects/${PROJECT_DIR}
-echo 'Сборка backend контейнера...'
+echo 'Building backend container...'
 docker-compose build backend
-echo 'Перезапуск backend...'
+echo 'Restarting backend...'
 docker-compose restart backend
 echo ''
-echo 'Статус контейнеров:'
+echo 'Container status:'
 docker-compose ps
 echo ''
-echo 'Деплой завершен!'
+echo 'Deployment complete!'
 "@
 
 ssh "${VPS_USER}@${VPS_IP}" $commands
 
-Write-Info "Готово! Проект обновлен на VPS"
+Write-Info "Done! Project updated on VPS"
