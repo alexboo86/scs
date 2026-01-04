@@ -584,7 +584,17 @@ async def embed_viewer(
     
     # Возвращаем HTML с iframe
     viewer_url = f"/viewer?token={viewer_token}"
-    base_url = str(request.base_url).rstrip('/')
+    
+    # Определяем протокол из заголовков (для работы за Nginx reverse proxy)
+    scheme = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    if scheme == "https" or request.url.scheme == "https":
+        scheme = "https"
+    else:
+        scheme = "http"
+    
+    # Формируем base_url с правильным протоколом
+    host = request.headers.get("Host", request.url.hostname)
+    base_url = f"{scheme}://{host}".rstrip('/')
     
     return HTMLResponse(f"""
     <!DOCTYPE html>
