@@ -212,6 +212,10 @@
 <body>
     <div class="header">
         <h1>🔐 Админ-панель Secure Content Service</h1>
+        <div style="float: right; margin-top: -30px;">
+            <span id="adminUsername" style="margin-right: 15px; color: rgba(255,255,255,0.8);"></span>
+            <button class="btn" onclick="logout()" style="background: #e74c3c;">Выход</button>
+        </div>
     </div>
     
     <div class="container">
@@ -379,8 +383,68 @@
     <script>
         const API_BASE = window.location.origin;
         
+        // Получаем токен из localStorage или cookie
+        function getAdminToken() {
+            return localStorage.getItem('admin_token') || getCookie('admin_token');
+        }
+        
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }
+        
+        // Добавляем токен к запросам
+        function getAuthHeaders() {
+            const token = getAdminToken();
+            return token ? {
+                'Authorization': `Bearer ${token}`
+            } : {};
+        }
+        
+        // Добавляем токен к URL для GET запросов
+        function addTokenToUrl(url) {
+            const token = getAdminToken();
+            if (token) {
+                const separator = url.includes('?') ? '&' : '?';
+                return `${url}${separator}token=${encodeURIComponent(token)}`;
+            }
+            return url;
+        }
+        
+        // Проверка авторизации
+        function checkAuth() {
+            const token = getAdminToken();
+            if (!token) {
+                window.location.href = '/api/auth/login';
+                return false;
+            }
+            return true;
+        }
+        
+        // Выход
+        async function logout() {
+            try {
+                await fetch(`${API_BASE}/api/auth/logout`, {
+                    method: 'POST',
+                    headers: getAuthHeaders()
+                });
+            } catch (e) {
+                // Игнорируем ошибки
+            }
+            localStorage.removeItem('admin_token');
+            window.location.href = '/api/auth/login';
+        }
+        
         // Инициализация
         document.addEventListener('DOMContentLoaded', () => {
+            if (!checkAuth()) return;
+            
+            // Показываем имя пользователя
+            const username = '{{ admin_username }}' || 'Admin';
+            document.getElementById('adminUsername').textContent = `👤 ${username}`;
+            
             loadDocuments();
             loadGlobalWatermarkSettings();
         });
@@ -407,6 +471,7 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        ...getAuthHeaders()
                     },
                     body: JSON.stringify({
                         document_token: documentToken
@@ -432,7 +497,8 @@
             
             try {
                 const response = await fetch(`${API_BASE}/api/documents/${docId}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
                 });
                 
                 if (response.ok) {
@@ -451,7 +517,10 @@
         // ========== ГЛОБАЛЬНЫЕ ВОДЯНЫЕ ЗНАКИ ==========
         async function loadGlobalWatermarkSettings() {
             try {
-                const response = await fetch(`${API_BASE}/api/admin/watermark/global`);
+                const url = addTokenToUrl(`${API_BASE}/api/admin/watermark/global`);
+                const response = await fetch(url, {
+                    headers: getAuthHeaders()
+                });
                 const settings = await response.json();
                 
                 // Статический водяной знак
@@ -529,6 +598,7 @@
                 
                 const response = await fetch(`${API_BASE}/api/admin/watermark/global`, {
                     method: 'PUT',
+                    headers: getAuthHeaders(),
                     body: formData
                 });
                 
@@ -581,12 +651,14 @@
                 formData.append('watermark_settings', JSON.stringify(settings));
                 await fetch(`${API_BASE}/api/admin/watermark/global`, {
                     method: 'PUT',
+                    headers: getAuthHeaders(),
                     body: formData
                 });
                 
                 // Загружаем предпросмотр
                 const timestamp = new Date().getTime();
-                previewImg.src = `${API_BASE}/api/admin/watermark/preview?t=${timestamp}`;
+                const token = getAdminToken();
+                previewImg.src = addTokenToUrl(`${API_BASE}/api/admin/watermark/preview?t=${timestamp}`);
                 previewImg.onload = () => {
                     previewLoading.style.display = 'none';
                     previewImg.style.display = 'block';
@@ -629,7 +701,9 @@
         // ========== ДОКУМЕНТЫ ==========
         async function loadDocuments() {
             try {
-                const response = await fetch(`${API_BASE}/api/documents/`);
+                const response = await fetch(`${API_BASE}/api/documents/`, {
+                    headers: getAuthHeaders()
+                });
                 const documents = await response.json();
                 
                 if (documents.length === 0) {
@@ -685,12 +759,29 @@
             try {
                 document.getElementById('uploadResult').innerHTML = '<div class="loading">Загрузка...</div>';
                 
+                // Для FormData не устанавливаем Content-Type - браузер сделает это автоматически
+                const headers = getAuthHeaders();
+                
                 const response = await fetch(`${API_BASE}/api/documents/upload`, {
                     method: 'POST',
+                    headers: headers,
                     body: formData
                 });
                 
-                const result = await response.json();
+                // Проверяем тип ответа перед парсингом
+                const contentType = response.headers.get('content-type');
+                let result;
+                
+                if (contentType && contentType.includes('application/json')) {
+                    result = await response.json();
+                } else {
+                    const text = await response.text();
+                    try {
+                        result = JSON.parse(text);
+                    } catch (e) {
+                        throw new Error(`Неожиданный ответ сервера: ${text.substring(0, 100)}`);
+                    }
+                }
                 
                 if (response.ok) {
                     let html = '<div class="alert alert-success">';
@@ -707,9 +798,10 @@
                     nameInput.value = '';
                     loadDocuments();
                 } else {
-                    showAlert('uploadResult', 'Ошибка загрузки: ' + (result.detail || 'Неизвестная ошибка'), 'error');
+                    showAlert('uploadResult', 'Ошибка загрузки: ' + (result.detail || result.message || 'Неизвестная ошибка'), 'error');
                 }
             } catch (error) {
+                console.error('Upload error:', error);
                 showAlert('uploadResult', 'Ошибка: ' + error.message, 'error');
             }
         }

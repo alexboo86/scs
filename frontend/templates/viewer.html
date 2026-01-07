@@ -95,7 +95,7 @@
         
         .viewer-content {
             flex: 1;
-            overflow: hidden;
+            overflow: hidden; /* Скрываем overflow для предотвращения скролла */
             position: relative;
             background: transparent;
             display: flex;
@@ -109,6 +109,7 @@
         }
         
         .page-container {
+            overflow: visible; /* Не обрезать canvas с водяным знаком */
             position: relative;
             margin: 0;
             padding: 0;
@@ -145,13 +146,18 @@
         
         
         /* Canvas для анимированного водяного знака */
+        /* Позиционирование устанавливается динамически в JavaScript, чтобы совпадать с изображением */
         #watermarkCanvas {
             position: absolute;
-            top: 0;
-            left: 0;
+            top: 50%;
+            left: 50%;
             pointer-events: none;
             z-index: 10;
             image-rendering: pixelated;
+            margin: 0;
+            padding: 0;
+            transform-origin: center center;
+            overflow: visible; /* Важно: не обрезать содержимое */
             /* Временно для отладки - можно убрать */
             /* border: 1px solid red; */
         }
@@ -193,10 +199,26 @@
         /* Защита от выделения */
         ::selection {
             background: transparent;
+            color: transparent;
         }
         
         ::-moz-selection {
             background: transparent;
+            color: transparent;
+        }
+        
+        /* Дополнительная защита от выделения и копирования */
+        * {
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        img, canvas {
+            -webkit-user-drag: none;
+            -khtml-user-drag: none;
+            -moz-user-drag: none;
+            -o-user-drag: none;
+            user-drag: none;
         }
         
         /* Скрытие контекстного меню */
@@ -266,23 +288,65 @@
         let currentPositionIndex = 0;
         let animationFrameId = null;
         
-        // Защита от копирования
+        // ========== ЗАЩИТА ОТ КОПИРОВАНИЯ ==========
+        
+        // 1. Блокировка копирования через события
         document.addEventListener('copy', (e) => {
             e.preventDefault();
+            e.clipboardData.setData('text/plain', '');
+            e.clipboardData.setData('text/html', '');
             showOverlay('Копирование запрещено');
             return false;
-        });
+        }, true);
         
         document.addEventListener('cut', (e) => {
             e.preventDefault();
+            e.clipboardData.setData('text/plain', '');
+            e.clipboardData.setData('text/html', '');
             showOverlay('Вырезание запрещено');
             return false;
-        });
+        }, true);
         
         document.addEventListener('paste', (e) => {
             e.preventDefault();
+            showOverlay('Вставка запрещена');
             return false;
-        });
+        }, true);
+        
+        // 2. Блокировка выделения текста
+        document.addEventListener('selectstart', (e) => {
+            e.preventDefault();
+            return false;
+        }, true);
+        
+        // 3. Блокировка выделения через клавиатуру (Ctrl+A, Shift+Arrow и т.д.)
+        document.addEventListener('keydown', (e) => {
+            // Ctrl+A, Ctrl+C, Ctrl+V, Ctrl+X
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'a' || e.key === 'A' || 
+                    e.key === 'c' || e.key === 'C' ||
+                    e.key === 'v' || e.key === 'V' ||
+                    e.key === 'x' || e.key === 'X') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    showOverlay('Эта операция запрещена');
+                    return false;
+                }
+            }
+        }, true);
+        
+        // 4. Очистка выделения при попытке выделить
+        setInterval(() => {
+            if (window.getSelection) {
+                const selection = window.getSelection();
+                if (selection && selection.toString().length > 0) {
+                    selection.removeAllRanges();
+                }
+            }
+            if (document.selection) {
+                document.selection.empty();
+            }
+        }, 100);
         
         // Блокировка правого клика
         document.addEventListener('contextmenu', (e) => {
@@ -291,21 +355,11 @@
             return false;
         });
         
-        // Блокировка горячих клавиш
-        document.addEventListener('keydown', (e) => {
-            // Ctrl+S, Ctrl+P, Print Screen, F12
-            if ((e.ctrlKey && (e.key === 's' || e.key === 'S' || e.key === 'p' || e.key === 'P')) ||
-                e.key === 'PrintScreen' ||
-                e.key === 'F12' ||
-                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i' || e.key === 'C' || e.key === 'c'))) {
-                e.preventDefault();
-                showOverlay('Эта операция запрещена');
-                return false;
-            }
-        });
+        // ========== ЗАЩИТА ОТ ИНСТРУМЕНТОВ РАЗРАБОТЧИКА ==========
         
-        // Блокировка DevTools (только если не в iframe)
-        let devtools = {open: false};
+        // Переменная для отслеживания состояния blur (объявляем здесь для доступа во всех блоках)
+        let isBlurred = false;
+        
         // Проверяем, находимся ли мы в iframe
         const isInIframe = window.self !== window.top;
         
@@ -335,50 +389,217 @@
             console.log('[VIEWER] API Base will be relative:', CONFIG.apiBase);
         }
         
-        // Если мы в iframe, не проверяем DevTools (может быть ложное срабатывание)
+        // 1. Блокировка горячих клавиш для DevTools и других инструментов
+        document.addEventListener('keydown', (e) => {
+            // F12, Ctrl+Shift+I, Ctrl+Shift+J, Ctrl+Shift+C, Ctrl+U, Ctrl+S, Ctrl+P
+            const blockedKeys = [
+                'F12',
+                (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'i')), // DevTools
+                (e.ctrlKey && e.shiftKey && (e.key === 'J' || e.key === 'j')), // Console
+                (e.ctrlKey && e.shiftKey && (e.key === 'C' || e.key === 'c')), // Element Inspector
+                (e.ctrlKey && (e.key === 'u' || e.key === 'U')), // View Source
+                (e.ctrlKey && (e.key === 's' || e.key === 'S')), // Save
+                (e.ctrlKey && (e.key === 'p' || e.key === 'P')), // Print
+                (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')), // Screenshot (Windows)
+                (e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4')), // Screenshot (Mac)
+            ];
+            
+            if (blockedKeys.some(blocked => blocked === true)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                showOverlay('Эта операция запрещена');
+                return false;
+            }
+        }, true);
+        
+        // 2. Блокировка правого клика (контекстное меню)
+        document.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showOverlay('Контекстное меню отключено');
+            return false;
+        }, true);
+        
+        // 3. Обнаружение DevTools через размеры окна (только если не в iframe)
+        let devtools = {open: false};
         if (!isInIframe) {
+            // Метод 1: Проверка размеров окна
             setInterval(() => {
-                // Увеличиваем порог для более точного определения DevTools
                 const heightDiff = window.outerHeight - window.innerHeight;
                 const widthDiff = window.outerWidth - window.innerWidth;
                 // DevTools обычно открывается снизу или справа, создавая разницу > 200px
-                // Но в некоторых браузерах может быть меньше, поэтому используем более умную проверку
                 if (heightDiff > 200 || widthDiff > 200) {
                     if (!devtools.open) {
                         devtools.open = true;
                         showOverlay('Инструменты разработчика обнаружены');
-                        // Можно также перенаправить или закрыть окно
-                        // window.location.href = 'about:blank';
+                        // Применяем blur при обнаружении DevTools
+                        document.body.style.filter = 'blur(20px) brightness(0.3)';
+                        document.body.style.pointerEvents = 'none';
                     }
                 } else {
-                    devtools.open = false;
+                    if (devtools.open) {
+                        devtools.open = false;
+                        // Убираем blur если DevTools закрыты
+                        if (!isBlurred) {
+                            document.body.style.filter = 'none';
+                            document.body.style.pointerEvents = 'auto';
+                        }
+                    }
                 }
             }, 500);
+            
+            // Метод 2: Проверка через console.log (обходной путь)
+            let devtoolsOpen = false;
+            const element = new Image();
+            Object.defineProperty(element, 'id', {
+                get: function() {
+                    if (!devtoolsOpen) {
+                        devtoolsOpen = true;
+                        showOverlay('Инструменты разработчика обнаружены');
+                        document.body.style.filter = 'blur(20px) brightness(0.3)';
+                        document.body.style.pointerEvents = 'none';
+                    }
+                }
+            });
+            setInterval(() => {
+                devtoolsOpen = false;
+                console.log(element);
+                console.clear();
+            }, 1000);
         } else {
             console.log('Viewer is in iframe, DevTools detection disabled to avoid false positives');
         }
         
-        // Защита от скриншотов (частичная)
-        document.addEventListener('keyup', (e) => {
-            if (e.key === 'PrintScreen') {
-                navigator.clipboard.writeText('');
-                showOverlay('Скриншот заблокирован');
+        // 4. Блокировка доступа к объектам разработчика
+        Object.defineProperty(window, 'devtools', {
+            get: function() {
+                showOverlay('Доступ к инструментам разработчика запрещен');
+                return {};
             }
         });
         
-        // Blur при потере фокуса
+        // ========== ЗАЩИТА ОТ СКРИНШОТОВ И ЗАПИСИ ЭКРАНА ==========
+        
+        // 1. Защита от Screen Capture API (запись экрана)
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+            const originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getDisplayMedia = function(constraints) {
+                showOverlay('Запись экрана заблокирована');
+                return Promise.reject(new DOMException('Запись экрана запрещена', 'NotAllowedError'));
+            };
+        }
+        
+        // 2. Защита от Print Screen и других способов скриншотов
+        document.addEventListener('keydown', (e) => {
+            // Print Screen, Windows + Shift + S, Mac Cmd + Shift + 3/4
+            if (e.key === 'PrintScreen' || 
+                (e.key === 's' && e.shiftKey && (e.metaKey || e.ctrlKey)) ||
+                (e.key === 'F12') ||
+                (e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4'))) {
+                e.preventDefault();
+                e.stopPropagation();
+                showOverlay('Скриншот заблокирован');
+                // Очищаем буфер обмена
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText('').catch(() => {});
+                }
+                return false;
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'PrintScreen') {
+                showOverlay('Скриншот заблокирован');
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText('').catch(() => {});
+                }
+            }
+        });
+        
+        // 3. Агрессивный blur при потере фокуса (для защиты от скриншотов)
         let blurTimeout;
+        
         window.addEventListener('blur', () => {
             blurTimeout = setTimeout(() => {
-                document.body.style.filter = 'blur(5px)';
-            }, 1000);
+                if (!isBlurred) {
+                    isBlurred = true;
+                    // Применяем сильный blur ко всему контенту
+                    document.body.style.filter = 'blur(20px) brightness(0.3)';
+                    document.body.style.pointerEvents = 'none';
+                    // Также применяем к viewer-content
+                    const viewerContent = document.querySelector('.viewer-content');
+                    if (viewerContent) {
+                        viewerContent.style.filter = 'blur(20px) brightness(0.3)';
+                    }
+                }
+            }, 300); // Уменьшили задержку для более быстрой реакции
         });
         
         window.addEventListener('focus', () => {
             if (blurTimeout) {
                 clearTimeout(blurTimeout);
+                blurTimeout = null;
             }
-            document.body.style.filter = 'none';
+            if (isBlurred) {
+                isBlurred = false;
+                document.body.style.filter = 'none';
+                document.body.style.pointerEvents = 'auto';
+                const viewerContent = document.querySelector('.viewer-content');
+                if (viewerContent) {
+                    viewerContent.style.filter = 'none';
+                }
+            }
+        });
+        
+        // 4. Защита от визуального копирования через CSS
+        // Добавляем защитный слой при попытке выделения
+        let selectionTimeout;
+        document.addEventListener('selectstart', (e) => {
+            e.preventDefault();
+            return false;
+        });
+        
+        // Блокируем выделение через мышь
+        document.addEventListener('mousedown', (e) => {
+            if (e.detail > 1) { // Двойной клик
+                e.preventDefault();
+            }
+        }, true);
+        
+        // 5. Защита от копирования через контекстное меню браузера
+        document.addEventListener('beforecopy', (e) => {
+            e.preventDefault();
+            return false;
+        });
+        
+        // 6. Дополнительная защита: обнаружение потери видимости страницы
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Страница скрыта - применяем blur
+                setTimeout(() => {
+                    if (document.hidden && !isBlurred) {
+                        isBlurred = true;
+                        document.body.style.filter = 'blur(20px) brightness(0.3)';
+                        document.body.style.pointerEvents = 'none';
+                        const viewerContent = document.querySelector('.viewer-content');
+                        if (viewerContent) {
+                            viewerContent.style.filter = 'blur(20px) brightness(0.3)';
+                        }
+                    }
+                }, 200);
+            } else {
+                // Страница видима - убираем blur
+                if (isBlurred) {
+                    isBlurred = false;
+                    document.body.style.filter = 'none';
+                    document.body.style.pointerEvents = 'auto';
+                    const viewerContent = document.querySelector('.viewer-content');
+                    if (viewerContent) {
+                        viewerContent.style.filter = 'none';
+                    }
+                }
+            }
         });
         
         // Защита от drag & drop
@@ -459,7 +680,8 @@
                 const img = document.getElementById('pageImage');
                 const container = document.getElementById('pageContainer');
                 
-                img.onload = () => {
+                // Обработчик загрузки изображения
+                const handleImageLoad = () => {
                     // Устанавливаем размер изображения для заполнения всей доступной области
                     if (img.naturalWidth > 0 && img.naturalHeight > 0) {
                         // Устанавливаем начальный zoom на 100% (оригинальный размер)
@@ -524,12 +746,42 @@
                     // Применяем текущий zoom
                     applyZoom();
                     
-                    // Небольшая задержка для применения zoom перед инициализацией водяного знака
-                    setTimeout(() => {
-                        console.log('Page loaded, initializing watermark animation');
-                        initWatermarkAnimation();
-                    }, 500);
+                    // Инициализируем водяной знак после полной загрузки изображения
+                    // Используем несколько попыток для надежности
+                    const initWatermarkWithRetry = (attempts = 0) => {
+                        if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                            console.log('Page loaded, initializing watermark animation. Image size:', img.naturalWidth, 'x', img.naturalHeight);
+                            
+                            // Сначала инициализируем canvas и контекст
+                            if (!watermarkCanvas) {
+                                watermarkCanvas = document.getElementById('watermarkCanvas');
+                            }
+                            if (!watermarkCtx && watermarkCanvas) {
+                                watermarkCtx = watermarkCanvas.getContext('2d');
+                            }
+                            
+                            // Затем обновляем размер canvas
+                            if (watermarkCanvas && watermarkCtx) {
+                                updateCanvasSize();
+                            } else {
+                                // Если canvas еще не готов, инициализируем через initWatermarkAnimation
+                                initWatermarkAnimation();
+                            }
+                        } else if (attempts < 20) {
+                            setTimeout(() => initWatermarkWithRetry(attempts + 1), 100);
+                        } else {
+                            console.warn('Failed to initialize watermark after', attempts, 'attempts');
+                        }
+                    };
+                    initWatermarkWithRetry();
                 };
+                
+                // Проверяем, не загружено ли изображение уже (из кеша)
+                if (img.complete && img.naturalWidth > 0) {
+                    handleImageLoad();
+                } else {
+                    img.onload = handleImageLoad;
+                }
                 img.onerror = () => {
                     showOverlay('Ошибка загрузки страницы');
                 };
@@ -586,10 +838,29 @@
             img.style.transform = `translate(-50%, -50%) scale(${CONFIG.zoomLevel})`;
             img.style.transformOrigin = 'center center';
             
-            // Применяем тот же zoom к canvas водяного знака
-            if (watermarkCanvas) {
+            // Применяем тот же zoom и позиционирование к canvas водяного знака
+            // Canvas должен точно совпадать с изображением
+            if (watermarkCanvas && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                // Убеждаемся, что canvas имеет те же размеры, что и изображение
+                // Внутренние размеры canvas (в пикселях)
+                watermarkCanvas.width = img.naturalWidth;
+                watermarkCanvas.height = img.naturalHeight;
+                
+                // CSS размеры должны совпадать с внутренними размерами
+                watermarkCanvas.style.width = img.naturalWidth + 'px';
+                watermarkCanvas.style.height = img.naturalHeight + 'px';
+                
+                // Применяем тот же transform, что и к изображению
                 watermarkCanvas.style.transform = `translate(-50%, -50%) scale(${CONFIG.zoomLevel})`;
                 watermarkCanvas.style.transformOrigin = 'center center';
+                
+                // Позиционирование должно совпадать с изображением
+                watermarkCanvas.style.position = 'absolute';
+                watermarkCanvas.style.top = '50%';
+                watermarkCanvas.style.left = '50%';
+                watermarkCanvas.style.margin = '0';
+                watermarkCanvas.style.padding = '0';
+                watermarkCanvas.style.pointerEvents = 'none';
             }
             
             // Контейнер остается на 100% размера viewport, масштабирование через transform
@@ -603,17 +874,10 @@
                 container.style.maxWidth = '100%';
                 container.style.maxHeight = '100%';
                 container.style.background = 'transparent';
+                container.style.overflow = 'visible'; // Важно: не обрезать canvas
             }
             
             document.getElementById('zoomLevel').textContent = Math.round(CONFIG.zoomLevel * 100) + '%';
-            
-            // Обновляем размер canvas при изменении zoom (если он инициализирован)
-            if (watermarkCanvas && watermarkCtx) {
-                // Небольшая задержка для применения transform перед обновлением размера
-                setTimeout(() => {
-                    updateCanvasSize();
-                }, 50);
-            }
         }
         
         function updatePageInfo() {
@@ -650,45 +914,75 @@
         // Функция обновления размера canvas водяного знака
         function updateCanvasSize() {
             if (!watermarkCanvas || !watermarkCtx) {
+                console.warn('updateCanvasSize: Canvas or context not available');
                 return;
             }
             
             const img = document.getElementById('pageImage');
             if (!img) {
+                console.warn('updateCanvasSize: Image element not found');
                 return;
             }
             
             // Ждем загрузки изображения
-            if (img.complete && img.naturalWidth > 0) {
+            if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
                 // Используем натуральные размеры изображения для canvas
                 const naturalWidth = img.naturalWidth;
                 const naturalHeight = img.naturalHeight;
                 
-                // Canvas должен совпадать с натуральным размером изображения
-                // CSS transform будет применен в applyZoom() для центрирования и масштабирования
-                watermarkCanvas.style.position = 'absolute';
-                watermarkCanvas.style.top = '50%';
-                watermarkCanvas.style.left = '50%';
-                watermarkCanvas.style.width = naturalWidth + 'px';
-                watermarkCanvas.style.height = naturalHeight + 'px';
-                
-                // Устанавливаем внутреннее разрешение canvas для четкости отрисовки
-                // Используем натуральный размер для лучшего качества
+                // Canvas должен ТОЧНО совпадать с изображением по размеру и позиции
+                // Устанавливаем внутреннее разрешение canvas (это размер в пикселях для отрисовки)
                 watermarkCanvas.width = naturalWidth;
                 watermarkCanvas.height = naturalHeight;
                 
-                // Сбрасываем трансформацию контекста
+                // Устанавливаем CSS размеры (это размер для отображения)
+                // Важно: CSS размеры должны совпадать с внутренними размерами canvas
+                watermarkCanvas.style.width = naturalWidth + 'px';
+                watermarkCanvas.style.height = naturalHeight + 'px';
+                
+                // Позиционирование должно ТОЧНО совпадать с изображением
+                watermarkCanvas.style.position = 'absolute';
+                watermarkCanvas.style.top = '50%';
+                watermarkCanvas.style.left = '50%';
+                watermarkCanvas.style.margin = '0';
+                watermarkCanvas.style.padding = '0';
+                watermarkCanvas.style.pointerEvents = 'none';
+                watermarkCanvas.style.transformOrigin = 'center center';
+                
+                // Сбрасываем трансформацию контекста canvas (для правильной отрисовки)
                 watermarkCtx.setTransform(1, 0, 0, 1, 0, 0);
                 
-                console.log('Canvas size updated:', naturalWidth, 'x', naturalHeight);
+                // Применяем тот же transform, что и к изображению (через applyZoom)
+                // Это синхронизирует масштабирование canvas с изображением
+                applyZoom();
+                
+                console.log('Canvas size updated:', {
+                    canvasWidth: watermarkCanvas.width,
+                    canvasHeight: watermarkCanvas.height,
+                    canvasStyleWidth: watermarkCanvas.style.width,
+                    canvasStyleHeight: watermarkCanvas.style.height,
+                    imageNaturalWidth: img.naturalWidth,
+                    imageNaturalHeight: img.naturalHeight,
+                    imageStyleWidth: img.style.width,
+                    imageStyleHeight: img.style.height,
+                    imageTransform: img.style.transform,
+                    canvasTransform: watermarkCanvas.style.transform
+                });
                 
                 // Перегенерируем позиции при изменении размера
                 generateWatermarkPositions();
                 
-                // Запускаем анимацию после обновления размера
-                startWatermarkAnimation();
+                // Запускаем анимацию после обновления размера (с небольшой задержкой для надежности)
+                setTimeout(() => {
+                    if (watermarkPositions.length > 0) {
+                        console.log('Starting animation after canvas size update, positions:', watermarkPositions.length);
+                        startWatermarkAnimation();
+                    } else {
+                        console.log('No positions available, skipping watermark');
+                    }
+                }, 50);
             } else {
-                console.log('Image not complete yet, naturalWidth:', img.naturalWidth);
+                console.log('Image not complete yet, naturalWidth:', img.naturalWidth, 'naturalHeight:', img.naturalHeight);
             }
         }
         
@@ -728,13 +1022,23 @@
             }
             
             // Обновляем размер при загрузке изображения
-            if (img.complete && img.naturalWidth > 0) {
+            if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                console.log('Image already loaded, updating canvas size immediately');
                 updateCanvasSize();
             } else {
-                img.addEventListener('load', () => {
-                    console.log('Image loaded, updating canvas size');
-                    setTimeout(updateCanvasSize, 100);
-                });
+                console.log('Image not loaded yet, waiting for load event');
+                // Удаляем старые обработчики, если они есть
+                img.removeEventListener('load', handleImageLoadForWatermark);
+                // Добавляем новый обработчик
+                const handleImageLoadForWatermark = () => {
+                    console.log('Image loaded event fired, updating canvas size');
+                    setTimeout(() => {
+                        if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {
+                            updateCanvasSize();
+                        }
+                    }, 100);
+                };
+                img.addEventListener('load', handleImageLoadForWatermark);
             }
             
             // Также обновляем при изменении размера окна
@@ -769,21 +1073,31 @@
             const seedHash = hashString(seed);
             const rng = seededRandom(seedHash);
             
+            // Получаем размеры изображения для проверки
             const img = document.getElementById('pageImage');
-            if (!img) {
-                console.error('Image element not found');
+            if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
+                console.log('Image not ready, cannot generate positions');
                 return;
             }
             
-            // Используем натуральный размер изображения для позиционирования
-            // так как canvas теперь использует натуральный размер
-            const naturalWidth = img.naturalWidth;
-            const naturalHeight = img.naturalHeight;
+            // Canvas должен иметь ТОЧНО такие же размеры, как изображение
+            // Используем размеры изображения напрямую - это источник истины
+            const canvasWidth = img.naturalWidth;
+            const canvasHeight = img.naturalHeight;
             
-            if (naturalWidth === 0 || naturalHeight === 0) {
-                console.log('Image natural size is zero, cannot generate positions');
+            // Убеждаемся, что canvas имеет правильные размеры
+            if (watermarkCanvas.width !== canvasWidth || watermarkCanvas.height !== canvasHeight) {
+                console.warn('Canvas size mismatch! Updating canvas to match image:', canvasWidth, 'x', canvasHeight);
+                watermarkCanvas.width = canvasWidth;
+                watermarkCanvas.height = canvasHeight;
+            }
+            
+            if (canvasWidth === 0 || canvasHeight === 0) {
+                console.log('Canvas size is zero, cannot generate positions');
                 return;
             }
+            
+            console.log('Generating positions for canvas:', canvasWidth, 'x', canvasHeight, 'image:', img.naturalWidth, 'x', img.naturalHeight);
             
             // Получаем размер текста водяного знака
             const watermarkText = buildWatermarkText();
@@ -794,72 +1108,99 @@
             }
             
             // Используем размер canvas для расчета позиций
+            // Применяем настройки из админ панели
             const baseFontSize = settings.font_size || 48;
             
+            // Устанавливаем шрифт для измерения текста (Arial используется по умолчанию)
             watermarkCtx.font = `${baseFontSize}px Arial`;
             const textMetrics = watermarkCtx.measureText(watermarkText);
             const textWidth = textMetrics.width;
-            const textHeight = baseFontSize;
             
-            console.log('Watermark text:', watermarkText, 'Size:', textWidth, 'x', textHeight);
+            // Реальная высота текста: ascent (над baseline) + descent (под baseline)
+            // ВСЕГДА используем надежные fallback значения на основе размера шрифта
+            // actualBoundingBox часто неточен и дает слишком маленькие значения
+            // Используем консервативные значения для гарантии видимости всего текста
+            const ascentFallback = baseFontSize * 0.85; // 85% от размера шрифта (консервативно)
+            const descentFallback = baseFontSize * 0.25; // 25% от размера шрифта (консервативно)
             
-            const padding = 50;
-            // Вычисляем допустимые границы с учетом размера текста
-            const minX = Math.max(0, padding);
-            const minY = Math.max(0, padding);
-            const maxX = Math.max(minX, naturalWidth - textWidth - padding);
-            const maxY = Math.max(minY, naturalHeight - textHeight - padding);
+            // ВСЕГДА используем fallback значения для надежности
+            const ascent = ascentFallback;
+            const descent = descentFallback;
+            
+            // Общая высота текста
+            const actualTextHeight = ascent + descent;
+            
+            // Отступ от краев (увеличен для безопасности, учитывая возможные неточности в расчете высоты текста)
+            const padding = Math.max(20, baseFontSize * 0.3); // Минимум 20px или 30% от размера шрифта
+            
+            // Вычисляем безопасные границы для x координаты
+            // x: от padding до canvasWidth - textWidth - padding (чтобы весь текст был виден)
+            const minX = padding;
+            const maxX = canvasWidth - textWidth - padding;
+            
+            // Вычисляем безопасные границы для y координаты (baseline)
+            // y должен быть минимум ascent + padding (чтобы верхняя часть букв не обрезалась)
+            // и максимум height - descent - padding (чтобы нижняя часть букв не обрезалась)
+            const minY = ascent + padding;
+            const maxY = canvasHeight - descent - padding;
             
             // Проверяем, что есть место для размещения
-            if (maxX <= minX || maxY <= minY) {
-                console.warn('Not enough space for watermark positions');
-                // Размещаем в центре, если места недостаточно
-                watermarkPositions = [{
-                    x: Math.max(0, Math.min(naturalWidth - textWidth, naturalWidth / 2 - textWidth / 2)),
-                    y: Math.max(0, Math.min(naturalHeight - textHeight, naturalHeight / 2 - textHeight / 2))
-                }];
+            if (maxX < minX || maxY < minY) {
+                // Размещаем в безопасном месте (центр с учетом границ)
+                const safeX = Math.max(padding, Math.min(canvasWidth - textWidth - padding, (canvasWidth - textWidth) / 2));
+                const safeY = Math.max(minY, Math.min(maxY, (canvasHeight - actualTextHeight) / 2 + ascent));
+                watermarkPositions = [{ x: safeX, y: safeY }];
+                console.log('Not enough space, using safe position:', safeX, safeY);
                 return;
             }
             
             watermarkPositions = [];
             let attempts = 0;
-            const maxAttempts = count * 50; // Увеличиваем количество попыток
+            const maxAttempts = count * 100;
             
             while (watermarkPositions.length < count && attempts < maxAttempts) {
                 attempts++;
-                const x = rng() * (maxX - minX) + minX;
-                const y = rng() * (maxY - minY) + minY;
+                // Генерируем координаты в безопасных пределах
+                // Используем Math.floor для целых чисел
+                const x = Math.floor(rng() * (maxX - minX + 1)) + minX;
+                const y = Math.floor(rng() * (maxY - minY + 1)) + minY;
                 
-                // Проверяем, что позиция в пределах изображения
-                if (x < 0 || x > naturalWidth - textWidth || y < 0 || y > naturalHeight - textHeight) {
-                    continue;
-                }
+                // СТРОГАЯ проверка: весь текст должен полностью помещаться внутри canvas
+                // Проверяем все границы строго (те же границы, что и в renderWatermark)
+                const textLeft = x;
+                const textRight = x + textWidth;
+                const textTop = y - ascent;
+                const textBottom = y + descent;
                 
-                // Проверяем минимальное расстояние от других позиций
-                let tooClose = false;
-                for (const pos of watermarkPositions) {
-                    const dx = Math.abs(x - pos.x);
-                    const dy = Math.abs(y - pos.y);
-                    const minDistance = Math.min(textWidth, textHeight) * 0.5;
-                    if (dx < minDistance && dy < minDistance) {
-                        tooClose = true;
-                        break;
+                const isValidX = textLeft >= padding && textRight <= canvasWidth - padding;
+                const isValidY = textTop >= padding && textBottom <= canvasHeight - padding;
+                
+                if (isValidX && isValidY) {
+                    // Проверяем минимальное расстояние от других позиций
+                    let tooClose = false;
+                    for (const pos of watermarkPositions) {
+                        const dx = Math.abs(x - pos.x);
+                        const dy = Math.abs(y - pos.y);
+                        const minDistance = Math.min(textWidth, actualTextHeight) * 0.5;
+                        if (dx < minDistance && dy < minDistance) {
+                            tooClose = true;
+                            break;
+                        }
                     }
-                }
-                
-                if (!tooClose) {
-                    watermarkPositions.push({ x, y });
+                    
+                    if (!tooClose) {
+                        // Сохраняем позицию с округленными координатами для точности
+                        watermarkPositions.push({ x: Math.round(x), y: Math.round(y) });
+                    }
                 }
             }
             
             if (watermarkPositions.length === 0) {
-                // Если не удалось сгенерировать, используем центр с проверкой границ
-                const centerX = Math.max(0, Math.min(naturalWidth - textWidth, naturalWidth / 2 - textWidth / 2));
-                const centerY = Math.max(0, Math.min(naturalHeight - textHeight, naturalHeight / 2 - textHeight / 2));
-                watermarkPositions.push({
-                    x: centerX,
-                    y: centerY
-                });
+                // Если не удалось сгенерировать, используем безопасную позицию
+                const safeX = Math.max(padding, Math.min(canvasWidth - textWidth - padding, (canvasWidth - textWidth) / 2));
+                const safeY = Math.max(minY, Math.min(maxY, (canvasHeight - actualTextHeight) / 2 + ascent));
+                watermarkPositions.push({ x: safeX, y: safeY });
+                console.log('No positions generated, using safe position:', safeX, safeY);
             }
             
             console.log('Generated', watermarkPositions.length, 'positions:', watermarkPositions);
@@ -907,145 +1248,327 @@
             }
             
             if (!settings.random_positions_enabled || watermarkPositions.length === 0) {
-                // Если случайное размещение выключено, рисуем в одной позиции
-                console.log('Watermark animation: random positions disabled, drawing static');
-                drawStaticWatermark();
+                // Если случайное размещение выключено, не показываем водяной знак
+                console.log('Watermark animation: random positions disabled, skipping watermark');
                 return;
             }
             
-            console.log('Starting watermark animation with', watermarkPositions.length, 'positions');
+            console.log('Starting watermark position switching with', watermarkPositions.length, 'positions');
+            console.log('Positions:', watermarkPositions);
+            
+            // Убеждаемся, что анимация не запущена уже
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
             
             let positionIndex = 0;
-            let transitionProgress = 0;
-            const transitionDuration = settings.animation_speed || 2000; // Скорость анимации из настроек
-            let lastTime = performance.now();
+            const switchInterval = settings.animation_speed || 2000; // Интервал переключения позиций (мс)
+            let lastSwitchTime = performance.now();
+            let lastDetailedLog = 0; // Время последнего детального лога
             
-            function animate(currentTime) {
+            function renderWatermark() {
                 if (!watermarkCanvas || !watermarkCtx) {
-                    console.error('Canvas or context not available in animate');
+                    console.error('Canvas or context not available');
                     return;
                 }
                 
                 if (watermarkPositions.length === 0) {
-                    console.error('No positions available for animation');
+                    console.error('No positions available');
                     return;
                 }
                 
-                const deltaTime = currentTime - lastTime;
-                lastTime = currentTime;
+                // Убеждаемся, что canvas синхронизирован с изображением
+                const img = document.getElementById('pageImage');
+                if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
+                    // Если изображение не готово, пропускаем кадр
+                    animationFrameId = requestAnimationFrame(renderWatermark);
+                    return;
+                }
                 
-                // Очищаем canvas
+                // Синхронизируем внутренние размеры canvas с натуральными размерами изображения
+                // Это нужно для правильной отрисовки в высоком разрешении
+                if (watermarkCanvas.width !== img.naturalWidth || watermarkCanvas.height !== img.naturalHeight) {
+                    watermarkCanvas.width = img.naturalWidth;
+                    watermarkCanvas.height = img.naturalHeight;
+                    console.warn('Canvas internal size updated to match image:', img.naturalWidth, 'x', img.naturalHeight);
+                }
+                
+                // Синхронизируем CSS размеры canvas с размерами изображения НА ЭКРАНЕ
+                // Это нужно для правильного масштабирования и позиционирования
+                const imgDisplayWidth = img.offsetWidth || img.clientWidth || img.naturalWidth;
+                const imgDisplayHeight = img.offsetHeight || img.clientHeight || img.naturalHeight;
+                
+                if (watermarkCanvas.style.width !== imgDisplayWidth + 'px' || 
+                    watermarkCanvas.style.height !== imgDisplayHeight + 'px') {
+                    watermarkCanvas.style.width = imgDisplayWidth + 'px';
+                    watermarkCanvas.style.height = imgDisplayHeight + 'px';
+                    console.warn('Canvas CSS size updated to match displayed image:', imgDisplayWidth, 'x', imgDisplayHeight);
+                }
+                
+                // Убеждаемся, что canvas синхронизирован с изображением по позиции и стилям
+                // Canvas должен иметь те же CSS свойства, что и изображение
+                if (watermarkCanvas.style.position !== img.style.position ||
+                    watermarkCanvas.style.top !== img.style.top ||
+                    watermarkCanvas.style.left !== img.style.left ||
+                    watermarkCanvas.style.transform !== img.style.transform ||
+                    watermarkCanvas.style.transformOrigin !== img.style.transformOrigin) {
+                    // Синхронизируем позиционирование и трансформации
+                    watermarkCanvas.style.position = img.style.position || 'absolute';
+                    watermarkCanvas.style.top = img.style.top || '50%';
+                    watermarkCanvas.style.left = img.style.left || '50%';
+                    watermarkCanvas.style.transform = img.style.transform || 'translate(-50%, -50%)';
+                    watermarkCanvas.style.transformOrigin = img.style.transformOrigin || 'center center';
+                    watermarkCanvas.style.margin = img.style.margin || '0';
+                    watermarkCanvas.style.padding = img.style.padding || '0';
+                }
+                
+                // Очищаем canvas ПЕРЕД рисованием
                 watermarkCtx.clearRect(0, 0, watermarkCanvas.width, watermarkCanvas.height);
                 
                 // Рисуем водяной знак
                 const watermarkText = buildWatermarkText();
                 if (!watermarkText) {
-                    animationFrameId = requestAnimationFrame(animate);
+                    animationFrameId = requestAnimationFrame(renderWatermark);
                     return;
                 }
                 
+                // Получаем текущее время для логирования
+                const currentTime = performance.now();
+                
+                // Применяем настройки из админ панели
                 const baseFontSize = settings.font_size || 48;
+                const colorR = settings.color_r !== undefined ? settings.color_r : 128;
+                const colorG = settings.color_g !== undefined ? settings.color_g : 128;
+                const colorB = settings.color_b !== undefined ? settings.color_b : 128;
+                const opacity = settings.opacity !== undefined ? settings.opacity : 0.25;
                 
+                // Устанавливаем шрифт и цвет ПЕРЕД измерением текста
+                // Шрифт Arial используется по умолчанию, так как изменение шрифта на canvas может работать некорректно
                 watermarkCtx.font = `${baseFontSize}px Arial`;
-                watermarkCtx.fillStyle = `rgba(${settings.color_r || 128}, ${settings.color_g || 128}, ${settings.color_b || 128}, ${settings.opacity || 0.25})`;
+                watermarkCtx.fillStyle = `rgba(${colorR}, ${colorG}, ${colorB}, ${opacity})`;
                 
-                // Вычисляем текущую позицию с плавным переходом
-                const currentPos = watermarkPositions[positionIndex];
-                const nextIndex = (positionIndex + 1) % watermarkPositions.length;
-                const nextPos = watermarkPositions[nextIndex];
+                // Логируем применение настроек (только при первом рендере)
+                if (positionIndex === 0 && currentTime - lastDetailedLog > 2000) {
+                    console.log('Watermark settings applied:', {
+                        font_size: baseFontSize,
+                        color: `rgb(${colorR}, ${colorG}, ${colorB})`,
+                        opacity: opacity,
+                        custom_text: settings.custom_text,
+                        show_user_email: settings.show_user_email,
+                        show_ip_address: settings.show_ip_address,
+                        show_page_number: settings.show_page_number,
+                        show_timestamp: settings.show_timestamp
+                    });
+                }
                 
-                // Плавная интерполяция между позициями
-                const progress = Math.min(transitionProgress / transitionDuration, 1);
-                const easeProgress = easeInOutQuad(progress); // Плавная функция easing
-                
-                let x = currentPos.x + (nextPos.x - currentPos.x) * easeProgress;
-                let y = currentPos.y + (nextPos.y - currentPos.y) * easeProgress;
-                
-                // Получаем размеры текста для проверки границ
+                // Получаем размеры текста ДО вычисления позиции
                 const textMetrics = watermarkCtx.measureText(watermarkText);
-                const textWidth = textMetrics.width;
-                const textHeight = baseFontSize;
+                // Добавляем запас к ширине текста, так как measureText() может быть неточным
+                // Особенно для длинных строк или специальных символов
+                // Увеличиваем запас до 15% или минимум 30px для большей надежности
+                const textWidthSafetyMargin = Math.max(30, textMetrics.width * 0.15); // 15% или минимум 30px
+                const textWidth = textMetrics.width + textWidthSafetyMargin;
                 
-                // Ограничиваем позицию границами canvas (изображения)
-                const maxX = Math.max(0, watermarkCanvas.width - textWidth);
-                const maxY = Math.max(0, watermarkCanvas.height - textHeight);
-                const minX = 0;
-                const minY = 0;
+                // Реальная высота текста: ascent (над baseline) + descent (под baseline)
+                // ВСЕГДА используем надежные fallback значения на основе размера шрифта
+                // actualBoundingBox часто неточен и дает слишком маленькие значения
+                // Используем консервативные значения для гарантии видимости всего текста
+                const ascentFallback = baseFontSize * 0.85; // 85% от размера шрифта (консервативно)
+                const descentFallback = baseFontSize * 0.25; // 25% от размера шрифта (консервативно)
                 
-                // Применяем ограничения
+                // ВСЕГДА используем fallback значения для надежности
+                const ascent = ascentFallback;
+                const descent = descentFallback;
+                
+                // Общая высота текста
+                const actualTextHeight = ascent + descent;
+                
+                // Берем текущую позицию (БЕЗ интерполяции - мгновенное переключение)
+                const currentPos = watermarkPositions[positionIndex];
+                
+                // Отступ от краев (увеличен для безопасности, учитывая возможные неточности в расчете размеров текста)
+                // Добавляем дополнительный запас для ширины текста
+                const basePadding = Math.max(30, baseFontSize * 0.4); // Минимум 30px или 40% от размера шрифта
+                const padding = basePadding + Math.max(15, textWidthSafetyMargin * 0.6); // Дополнительный запас для ширины текста
+                
+                // Логируем для отладки (только при первом рендере или переключении позиций)
+                if (performance.now() - lastSwitchTime < 100) {
+                    console.log('Text metrics calculation:', {
+                        baseFontSize,
+                        ascentFallback, descentFallback,
+                        finalAscent: ascent, finalDescent: descent,
+                        actualTextHeight,
+                        textWidthRaw: textMetrics.width,
+                        textWidthSafetyMargin,
+                        textWidth: textWidth,
+                        padding
+                    });
+                }
+                
+                // Используем размеры canvas (которые равны naturalWidth/naturalHeight изображения)
+                // Canvas имеет те же размеры, что и изображение, поэтому границы простые
+                const canvasW = watermarkCanvas.width;  // = img.naturalWidth
+                const canvasH = watermarkCanvas.height; // = img.naturalHeight
+                
+                // СТРОГИЕ границы с учетом реальных размеров текста
+                // x: от padding до canvasW - textWidth - padding (чтобы весь текст был виден)
+                // y (baseline): от ascent + padding до canvasH - descent - padding
+                const minX = padding;
+                const maxX = canvasW - textWidth - padding;
+                const minY = ascent + padding;
+                const maxY = canvasH - descent - padding;
+                
+                // Проверяем, что границы валидны
+                if (maxX < minX || maxY < minY) {
+                    console.warn('Canvas too small for watermark, using center position');
+                    // Если canvas слишком маленький, размещаем в центре
+                    const safeX = Math.max(0, Math.min(canvasW - textWidth, (canvasW - textWidth) / 2));
+                    const safeY = Math.max(ascent, Math.min(canvasH - descent, (canvasH - actualTextHeight) / 2 + ascent));
+                    watermarkCtx.fillText(watermarkText, safeX, safeY);
+                    animationFrameId = requestAnimationFrame(renderWatermark);
+                    return;
+                }
+                
+                // Берем координаты из позиции
+                let x = currentPos.x;
+                let y = currentPos.y;
+                
+                // СТРОГОЕ ограничение координат в пределах canvas ПЕРЕД проверкой
+                // Это гарантирует, что координаты всегда валидны
                 x = Math.max(minX, Math.min(maxX, x));
                 y = Math.max(minY, Math.min(maxY, y));
                 
-                // Рисуем текст (y координата уже включает font_size для baseline)
-                watermarkCtx.fillText(watermarkText, x, y + baseFontSize);
+                // ВЫЧИСЛЯЕМ границы текста с ограниченными координатами
+                const textLeft = x;
+                const textRight = x + textWidth;
+                const textTop = y - ascent;
+                const textBottom = y + descent;
                 
-                // Переход к следующей позиции
-                transitionProgress += deltaTime;
-                if (transitionProgress >= transitionDuration) {
-                    transitionProgress = 0;
-                    positionIndex = nextIndex;
-                    console.log('Moving to position', positionIndex, 'of', watermarkPositions.length);
+                // ПРОВЕРЯЕМ, валидны ли координаты после ограничения
+                const isValid = textLeft >= padding && 
+                               textRight <= canvasW - padding &&
+                               textTop >= padding && 
+                               textBottom <= canvasH - padding;
+                
+                let finalX, finalY;
+                
+                if (!isValid) {
+                    // Если координаты все еще невалидны после ограничения, используем безопасную позицию в центре
+                    console.warn('Position invalid after clamping, using safe center position', {
+                        originalX: currentPos.x, originalY: currentPos.y,
+                        clampedX: x, clampedY: y,
+                        textLeft, textRight, textTop, textBottom,
+                        canvasW, canvasH, padding, textWidth, ascent, descent
+                    });
+                    finalX = Math.max(padding, Math.min(canvasW - textWidth - padding, (canvasW - textWidth) / 2));
+                    finalY = Math.max(ascent + padding, Math.min(canvasH - descent - padding, (canvasH - actualTextHeight) / 2 + ascent));
+                } else {
+                    // Используем ограниченные координаты
+                    finalX = x;
+                    finalY = y;
                 }
                 
-                animationFrameId = requestAnimationFrame(animate);
+                // ФИНАЛЬНАЯ проверка перед рисованием - убеждаемся, что весь текст виден
+                const finalTextLeft = finalX;
+                const finalTextRight = finalX + textWidth;
+                const finalTextTop = finalY - ascent;
+                const finalTextBottom = finalY + descent;
+                
+                // Если после всех проверок текст все еще выходит за границы, принудительно используем центр
+                if (finalTextLeft < padding || finalTextRight > canvasW - padding ||
+                    finalTextTop < padding || finalTextBottom > canvasH - padding) {
+                    console.error('Watermark still invalid after all corrections, forcing center position', {
+                        finalX, finalY,
+                        finalTextLeft, finalTextRight, finalTextTop, finalTextBottom,
+                        canvasW, canvasH, padding, textWidth, ascent, descent
+                    });
+                    finalX = Math.max(padding, Math.min(canvasW - textWidth - padding, (canvasW - textWidth) / 2));
+                    finalY = Math.max(ascent + padding, Math.min(canvasH - descent - padding, (canvasH - actualTextHeight) / 2 + ascent));
+                }
+                
+                // ВСЕГДА рисуем текст - координаты гарантированно валидны
+                watermarkCtx.fillText(watermarkText, finalX, finalY);
+                
+                // Вычисляем границы текста для проверки
+                const renderedTextLeft = finalX;
+                const renderedTextRight = finalX + textWidth;
+                const renderedTextTop = finalY - ascent;
+                const renderedTextBottom = finalY + descent;
+                
+                // Проверяем, что текст в пределах canvas
+                const isWithinBounds = renderedTextLeft >= padding && 
+                                     renderedTextRight <= canvasW - padding &&
+                                     renderedTextTop >= padding && 
+                                     renderedTextBottom <= canvasH - padding;
+                
+                // Логируем для отладки (при переключении позиций или раз в секунду)
+                // currentTime уже определен выше
+                const shouldLog = (currentTime - lastSwitchTime < 100) || 
+                                 (lastDetailedLog === 0 || currentTime - lastDetailedLog > 1000);
+                
+                if (shouldLog) {
+                    // Проверяем видимые границы canvas на экране
+                    const canvasRect = watermarkCanvas.getBoundingClientRect();
+                    const imgRect = img.getBoundingClientRect();
+                    
+                    console.log('Watermark rendered at:', {
+                        x: finalX, y: finalY,
+                        textWidth, ascent, descent,
+                        textBounds: { 
+                            left: renderedTextLeft, 
+                            right: renderedTextRight, 
+                            top: renderedTextTop, 
+                            bottom: renderedTextBottom 
+                        },
+                        canvasBounds: { 
+                            width: canvasW, 
+                            height: canvasH,
+                            screenWidth: canvasRect.width,
+                            screenHeight: canvasRect.height
+                        },
+                        imageBounds: {
+                            naturalWidth: img.naturalWidth,
+                            naturalHeight: img.naturalHeight,
+                            screenWidth: imgRect.width,
+                            screenHeight: imgRect.height
+                        },
+                        padding,
+                        bounds: { minX, maxX, minY, maxY },
+                        isWithinBounds,
+                        currentPos: currentPos,
+                        positionIndex: positionIndex,
+                        totalPositions: watermarkPositions.length
+                    });
+                    
+                    lastDetailedLog = currentTime;
+                    
+                    if (!isWithinBounds) {
+                        console.error('WATERMARK OUT OF BOUNDS!', {
+                            renderedTextLeft, renderedTextRight, renderedTextTop, renderedTextBottom,
+                            canvasW, canvasH, padding,
+                            shouldBe: {
+                                left: `>= ${padding}`,
+                                right: `<= ${canvasW - padding}`,
+                                top: `>= ${padding}`,
+                                bottom: `<= ${canvasH - padding}`
+                            }
+                        });
+                    }
+                }
+                
+                // Проверяем, нужно ли переключиться на следующую позицию
+                if (currentTime - lastSwitchTime >= switchInterval) {
+                    positionIndex = (positionIndex + 1) % watermarkPositions.length;
+                    lastSwitchTime = currentTime;
+                    console.log('Switched to position', positionIndex, 'of', watermarkPositions.length);
+                }
+                
+                // Продолжаем рендеринг
+                animationFrameId = requestAnimationFrame(renderWatermark);
             }
             
-            animationFrameId = requestAnimationFrame(animate);
-        }
-        
-        function drawStaticWatermark() {
-            if (!watermarkCanvas || !watermarkCtx) {
-                return;
-            }
-            
-            const settings = CONFIG.watermarkSettings;
-            const watermarkText = buildWatermarkText();
-            if (!watermarkText) {
-                return;
-            }
-            
-            const baseFontSize = settings.font_size || 48;
-            watermarkCtx.font = `${baseFontSize}px Arial`;
-            watermarkCtx.fillStyle = `rgba(${settings.color_r || 128}, ${settings.color_g || 128}, ${settings.color_b || 128}, ${settings.opacity || 0.25})`;
-            
-            // Вычисляем размеры текста
-            const textMetrics = watermarkCtx.measureText(watermarkText);
-            const textWidth = textMetrics.width;
-            const textHeight = baseFontSize;
-            
-            // Используем размеры canvas для позиционирования
-            const canvasWidth = watermarkCanvas.width;
-            const canvasHeight = watermarkCanvas.height;
-            const padding = 10;
-            
-            let x, y;
-            
-            if (settings.position === 'center') {
-                x = (canvasWidth - textWidth) / 2;
-                y = (canvasHeight - textHeight) / 2;
-            } else if (settings.position === 'top-left') {
-                x = padding;
-                y = padding;
-            } else if (settings.position === 'top-right') {
-                x = canvasWidth - textWidth - padding;
-                y = padding;
-            } else if (settings.position === 'bottom-left') {
-                x = padding;
-                y = canvasHeight - textHeight - padding;
-            } else if (settings.position === 'bottom-right') {
-                x = canvasWidth - textWidth - padding;
-                y = canvasHeight - textHeight - padding;
-            } else {
-                // По умолчанию - центр
-                x = (canvasWidth - textWidth) / 2;
-                y = (canvasHeight - textHeight) / 2;
-            }
-            
-            // Ограничиваем позицию границами canvas (гарантируем, что текст не выходит за пределы)
-            x = Math.max(0, Math.min(canvasWidth - textWidth, x));
-            y = Math.max(0, Math.min(canvasHeight - textHeight, y));
-            
-            watermarkCtx.fillText(watermarkText, x, y + textHeight);
+            animationFrameId = requestAnimationFrame(renderWatermark);
         }
         
         // Функция плавного перехода (easing)

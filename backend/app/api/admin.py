@@ -3,16 +3,58 @@ API для административных функций
 """
 import json
 from typing import List
-from fastapi import APIRouter, HTTPException, Depends, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, HTTPException, Depends, Form, Request, Header
+from starlette.requests import Request as StarletteRequest
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from sqlalchemy.orm import Session
-from app.models.database import get_db, Document, User, DocumentAccess, GlobalWatermarkSettings
+from app.models.database import get_db, Document, User, DocumentAccess, GlobalWatermarkSettings, AdminUser
 from app.models.schemas import AccessGrant, WatermarkSettings
+from app.core.security import decode_access_token
 from datetime import datetime
 
 router = APIRouter()
+
+
+def get_request(request: Request = None) -> Request:
+    """Dependency для получения Request"""
+    if request is None:
+        raise HTTPException(status_code=500, detail="Request not available")
+    return request
+
+
+def get_admin_from_request(request: Request, db: Session) -> AdminUser:
+    """Получение администратора из запроса (через cookie или localStorage)"""
+    # Пробуем получить токен из cookie
+    token = request.cookies.get("admin_token")
+    
+    # Если нет в cookie, пробуем из заголовка (для AJAX запросов)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    
+    # Если все еще нет токена, пробуем из query параметра (для простоты)
+    if not token:
+        token = request.query_params.get("token")
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Требуется авторизация")
+    
+    payload = decode_access_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Недействительный токен")
+    
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=401, detail="Недействительный токен")
+    
+    admin = db.query(AdminUser).filter(AdminUser.username == username).first()
+    if not admin or not admin.is_active:
+        raise HTTPException(status_code=401, detail="Администратор не найден или неактивен")
+    
+    return admin
 
 # Templates для админки
 possible_templates_dirs = [
@@ -36,10 +78,16 @@ else:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def admin_panel(request: Request):
-    """Админ-панель"""
+async def admin_panel(request: Request, db: Session = Depends(get_db)):
+    """Админ-панель (требует авторизации)"""
+    try:
+        admin = get_admin_from_request(request, db)
+    except HTTPException:
+        # Если не авторизован, редирект на страницу входа
+        return RedirectResponse(url="/api/auth/login", status_code=302)
+    
     if templates:
-        return templates.TemplateResponse("admin.html", {"request": request})
+        return templates.TemplateResponse("admin.html", {"request": request, "admin_username": admin.username})
     else:
         from fastapi.responses import HTMLResponse
         return HTMLResponse("""
@@ -56,10 +104,12 @@ async def admin_panel(request: Request):
 @router.post("/documents/{document_id}/access")
 async def grant_access(
     document_id: int,
+    request: Request,
     user_emails: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """Предоставление доступа пользователям к документу"""
+    """Предоставление доступа пользователям к документу (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
@@ -102,8 +152,9 @@ async def grant_access(
 
 
 @router.get("/documents/{document_id}/access")
-async def get_document_access(document_id: int, db: Session = Depends(get_db)):
-    """Получение списка пользователей с доступом к документу"""
+async def get_document_access(document_id: int, request: Request, db: Session = Depends(get_db)):
+    """Получение списка пользователей с доступом к документу (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     doc = db.query(Document).filter(Document.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
@@ -131,9 +182,11 @@ async def get_document_access(document_id: int, db: Session = Depends(get_db)):
 async def revoke_access(
     document_id: int,
     user_email: str,
+    request: Request,
     db: Session = Depends(get_db)
 ):
-    """Отзыв доступа пользователя к документу"""
+    """Отзыв доступа пользователя к документу (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     user = db.query(User).filter(User.email == user_email).first()
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -154,10 +207,12 @@ async def revoke_access(
 
 @router.put("/watermark/global")
 async def update_global_watermark(
+    request: Request,
     watermark_settings: str = Form(...),
     db: Session = Depends(get_db)
 ):
-    """Обновление глобальных настроек водяных знаков (для всех документов)"""
+    """Обновление глобальных настроек водяных знаков (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     try:
         # Парсим JSON настройки
         settings_dict = json.loads(watermark_settings)
@@ -208,8 +263,9 @@ async def update_global_watermark(
 
 
 @router.get("/watermark/global")
-async def get_global_watermark(db: Session = Depends(get_db)):
-    """Получение глобальных настроек водяных знаков"""
+async def get_global_watermark(request: Request, db: Session = Depends(get_db)):
+    """Получение глобальных настроек водяных знаков (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     global_settings = db.query(GlobalWatermarkSettings).first()
     
     if global_settings and global_settings.settings_json:
@@ -228,7 +284,8 @@ async def preview_watermark(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Предпросмотр водяных знаков на тестовом изображении"""
+    """Предпросмотр водяных знаков на тестовом изображении (требует авторизации)"""
+    get_admin_from_request(request, db)  # Проверка авторизации
     from fastapi.responses import FileResponse
     from PIL import Image, ImageDraw, ImageFont
     import io

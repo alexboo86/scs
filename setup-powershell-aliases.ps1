@@ -10,13 +10,27 @@ if (-not (Test-Path $profilePath)) {
     Write-Host "[INFO] PowerShell profile created: $profilePath" -ForegroundColor Green
 }
 
+# Определяем путь к проекту автоматически
+$ProjectPath = Split-Path -Parent $MyInvocation.MyCommand.Path
+
 # Добавляем функции в профиль
 $aliasesContent = @"
 
 # Secure Content Service - Quick Deploy Aliases
+# Project path: $ProjectPath
+
 function Update-File {
     param([Parameter(Mandatory=`$true)][string]`$FilePath)
-    & "D:\WORK\secure-content-service\deploy-single-file.ps1" `$FilePath
+    & "$ProjectPath\quick-update.ps1" -FilePath `$FilePath
+}
+
+function Quick-Update {
+    param([string]`$FilePath = "")
+    if (`$FilePath) {
+        & "$ProjectPath\quick-update.ps1" -FilePath `$FilePath
+    } else {
+        & "$ProjectPath\quick-update.ps1"
+    }
 }
 
 function Restart-Backend {
@@ -24,7 +38,7 @@ function Restart-Backend {
 }
 
 function Deploy-All {
-    & "D:\WORK\secure-content-service\deploy.ps1"
+    & "$ProjectPath\deploy.ps1"
 }
 
 function Connect-VPS {
@@ -37,6 +51,7 @@ function Show-Logs {
 
 # Алиасы для быстрого доступа
 Set-Alias -Name update -Value Update-File
+Set-Alias -Name qupdate -Value Quick-Update
 Set-Alias -Name restart -Value Restart-Backend
 Set-Alias -Name deploy -Value Deploy-All
 Set-Alias -Name vps -Value Connect-VPS
@@ -51,11 +66,13 @@ if ($currentProfile -notlike "*Secure Content Service*") {
     Write-Host "[INFO] Aliases added to PowerShell profile" -ForegroundColor Green
     Write-Host ""
     Write-Host "Available commands:" -ForegroundColor Cyan
-    Write-Host "  update backend\app\api\viewer.py  - Update single file" -ForegroundColor Yellow
-    Write-Host "  restart                          - Restart backend" -ForegroundColor Yellow
-    Write-Host "  deploy                           - Full deployment" -ForegroundColor Yellow
-    Write-Host "  vps                              - Connect to VPS" -ForegroundColor Yellow
-    Write-Host "  logs                             - Show backend logs" -ForegroundColor Yellow
+    Write-Host "  update backend\app\api\viewer.py  - Update single file and restart" -ForegroundColor Yellow
+    Write-Host "  qupdate                           - Update all files and restart" -ForegroundColor Yellow
+    Write-Host "  qupdate file.py                   - Update specific file and restart" -ForegroundColor Yellow
+    Write-Host "  restart                           - Restart backend only" -ForegroundColor Yellow
+    Write-Host "  deploy                            - Full deployment (rebuild)" -ForegroundColor Yellow
+    Write-Host "  vps                               - Connect to VPS" -ForegroundColor Yellow
+    Write-Host "  logs                              - Show backend logs" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "[INFO] Reload PowerShell or run: . `$PROFILE" -ForegroundColor Green
 } else {

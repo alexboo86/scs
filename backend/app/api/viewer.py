@@ -244,6 +244,20 @@ async def create_viewer_token(
             db.refresh(user)
         user_id = user.id
     
+    # Очищаем старые сессии (старше 7 дней) перед созданием новой
+    # Это предотвращает переполнение базы данных
+    try:
+        old_date = datetime.utcnow() - timedelta(days=7)
+        deleted_count = db.query(ViewingSession).filter(
+            ViewingSession.created_at < old_date
+        ).delete()
+        if deleted_count > 0:
+            db.commit()
+            print(f"[CLEANUP] Deleted {deleted_count} old viewing sessions")
+    except Exception as e:
+        print(f"[WARN] Failed to cleanup old sessions: {e}")
+        db.rollback()
+    
     # Создаем сессию просмотра
     viewer_token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
@@ -587,37 +601,59 @@ async def embed_viewer(
     
     # Получаем host
     host = request.headers.get("Host", request.url.hostname) or "lessons.incrypto.ru"
+    host_str = str(host).lower().strip()
     
-    # ПРИНУДИТЕЛЬНО используем HTTPS для домена lessons.incrypto.ru
-    # Это критически важно для работы через HTTPS сайт Tilda
-    if "lessons.incrypto.ru" in str(host).lower():
-        scheme = "https"
-        base_url = f"https://{host}".rstrip('/')
-        print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain")
+    # КРИТИЧЕСКИ ВАЖНО: ВСЕГДА используем HTTPS для production домена
+    # Это необходимо для работы через HTTPS сайты (Tilda) и предотвращения Mixed Content ошибок
+    # Убираем порт из host если есть (например, lessons.incrypto.ru:8000 -> lessons.incrypto.ru)
+    if ':' in host_str:
+        host_str = host_str.split(':')[0]
+        host = host.split(':')[0]
+    
+    # ПРИНУДИТЕЛЬНО используем HTTPS для lessons.incrypto.ru
+    # Не зависим от request.url.scheme, так как он может быть HTTP из-за прокси
+    if "lessons.incrypto.ru" in host_str or host_str == "lessons.incrypto.ru":
+        base_url = "https://lessons.incrypto.ru"
+        print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain: {base_url}")
     else:
-        # Для других доменов определяем протокол из заголовков
-        scheme = request.headers.get("X-Forwarded-Proto", "").lower()
-        
-        if not scheme:
-            referer = request.headers.get("Referer", "")
-            if referer and referer.startswith("https://"):
-                scheme = "https"
-            else:
-                scheme = request.url.scheme or "https"
-        
-        base_url = f"{scheme}://{host}".rstrip('/')
+        # Для других доменов всегда используем HTTPS по умолчанию
+        base_url = f"https://{host}".rstrip('/')
+        print(f"[EMBED] Using HTTPS for domain: {host} -> {base_url}")
+    
+    # Дополнительная проверка: убеждаемся, что base_url всегда HTTPS
+    if base_url.startswith("http://"):
+        base_url = base_url.replace("http://", "https://")
+        print(f"[EMBED] WARNING: Fixed HTTP to HTTPS: {base_url}")
+    
+    scheme = "https"  # Всегда HTTPS
     
     # Логирование для отладки
-    print(f"[EMBED] Host: {host}, Scheme: {scheme}, X-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto')}, URL scheme: {request.url.scheme}")
-    print(f"[EMBED] Final base_url: {base_url}")
-    print(f"[EMBED] Final viewer URL: {base_url}{viewer_url}")
+    referer = request.headers.get("Referer", "")
+    origin = request.headers.get("Origin", "")
+    x_forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+    print(f"[EMBED] Host: {host}, Host (str): {host_str}")
+    print(f"[EMBED] Referer: {referer}")
+    print(f"[EMBED] Origin: {origin}")
+    print(f"[EMBED] X-Forwarded-Proto: {x_forwarded_proto}")
+    print(f"[EMBED] Request URL scheme: {request.url.scheme}")
+    print(f"[EMBED] Final scheme: {scheme}")
+    # Финальная проверка и исправление URL
+    final_viewer_url = f"{base_url}{viewer_url}"
+    if final_viewer_url.startswith("http://"):
+        final_viewer_url = final_viewer_url.replace("http://", "https://")
+        print(f"[EMBED] WARNING: Final URL was HTTP, fixed to: {final_viewer_url}")
     
-    return HTMLResponse(f"""
+    print(f"[EMBED] Final base_url: {base_url}")
+    print(f"[EMBED] Final viewer URL: {final_viewer_url}")
+    
+    # Создаем ответ с заголовками для принудительного использования HTTPS
+    response = HTMLResponse(f"""
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
         <title>{doc.name}</title>
         <style>
             * {{
@@ -662,12 +698,68 @@ async def embed_viewer(
         <iframe 
             id="viewerFrame"
             class="embed-container"
-            src="{base_url}{viewer_url}"
+            src="{final_viewer_url}"
             frameborder="0"
             allowfullscreen
             style="display: none; width: 100%; height: 100%; border: none; margin: 0; padding: 0;"
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+            loading="eager"
         ></iframe>
+        <script>
+            // КРИТИЧЕСКИ ВАЖНО: Принудительное исправление URL на HTTPS
+            (function() {{
+                const iframe = document.getElementById('viewerFrame');
+                if (!iframe) {{
+                    console.error('[EMBED] Iframe not found!');
+                    return;
+                }}
+                
+                // ПРИНУДИТЕЛЬНО устанавливаем HTTPS URL
+                const viewerUrl = '{final_viewer_url}';
+                let httpsUrl = viewerUrl;
+                
+                // Если URL начинается с http://, заменяем на https://
+                if (httpsUrl.startsWith('http://')) {{
+                    httpsUrl = httpsUrl.replace('http://', 'https://');
+                    console.log('[EMBED] FIXING HTTP to HTTPS:', viewerUrl, '->', httpsUrl);
+                }}
+                
+                // Если URL относительный, делаем абсолютный с HTTPS
+                if (!httpsUrl.startsWith('http')) {{
+                    httpsUrl = 'https://lessons.incrypto.ru' + (httpsUrl.startsWith('/') ? httpsUrl : '/' + httpsUrl);
+                    console.log('[EMBED] Converting relative to HTTPS:', viewerUrl, '->', httpsUrl);
+                }}
+                
+                // Устанавливаем URL
+                console.log('[EMBED] Setting iframe src to:', httpsUrl);
+                iframe.src = httpsUrl;
+                iframe.setAttribute('src', httpsUrl);
+                
+                // Дополнительная проверка через небольшую задержку
+                setTimeout(function() {{
+                    const currentSrc = iframe.src || iframe.getAttribute('src');
+                    if (currentSrc && currentSrc.startsWith('http://')) {{
+                        console.error('[EMBED] ERROR: Iframe src changed to HTTP:', currentSrc);
+                        const fixedSrc = currentSrc.replace('http://', 'https://');
+                        console.log('[EMBED] Fixing again to:', fixedSrc);
+                        iframe.src = fixedSrc;
+                        iframe.setAttribute('src', fixedSrc);
+                    }}
+                }}, 100);
+                
+                // Проверка после загрузки
+                iframe.addEventListener('load', function() {{
+                    const finalSrc = iframe.src || iframe.getAttribute('src');
+                    console.log('[EMBED] Iframe loaded, final src:', finalSrc);
+                    if (finalSrc && finalSrc.startsWith('http://')) {{
+                        console.error('[EMBED] ERROR: Iframe still using HTTP after load:', finalSrc);
+                        const httpsSrc = finalSrc.replace('http://', 'https://');
+                        iframe.src = httpsSrc;
+                        iframe.setAttribute('src', httpsSrc);
+                    }}
+                }});
+            }})();
+        </script>
         <script>
             const iframe = document.getElementById('viewerFrame');
             const loading = document.getElementById('loading');
@@ -684,3 +776,15 @@ async def embed_viewer(
     </body>
     </html>
     """)
+    
+    # Добавляем заголовки для принудительного использования HTTPS
+    response.headers["Content-Security-Policy"] = "upgrade-insecure-requests"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    return response
+    
+    # Добавляем заголовки для принудительного использования HTTPS
+    response.headers["Content-Security-Policy"] = "upgrade-insecure-requests"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    return response

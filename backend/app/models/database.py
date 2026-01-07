@@ -108,9 +108,41 @@ class GlobalWatermarkSettings(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AdminUser(Base):
+    """Модель администратора"""
+    __tablename__ = "admin_users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 def init_db():
     """Инициализация базы данных"""
     Base.metadata.create_all(bind=engine)
+    
+    # Создаем дефолтного админа если его нет
+    from app.core.security import get_password_hash
+    db = SessionLocal()
+    try:
+        admin = db.query(AdminUser).filter(AdminUser.username == "admin").first()
+        if not admin:
+            default_password = get_password_hash("admin123")  # Измените пароль!
+            admin = AdminUser(
+                username="admin",
+                hashed_password=default_password,
+                is_active=True
+            )
+            db.add(admin)
+            db.commit()
+            print("⚠️  Создан дефолтный админ: username=admin, password=admin123")
+            print("⚠️  ВАЖНО: Измените пароль после первого входа!")
+    except Exception as e:
+        print(f"Ошибка создания дефолтного админа: {e}")
+    finally:
+        db.close()
 
 
 def get_db():

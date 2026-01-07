@@ -214,54 +214,99 @@ class WatermarkService:
         seed_hash = int(hashlib.md5(seed.encode()).hexdigest(), 16)
         rng = random.Random(seed_hash)
         
-        # Отступ от краев
-        padding = 50
+        # Отступ от краев (минимум 10 пикселей)
+        padding = 10
         
-        # Учитываем размер текста, чтобы он не выходил за границы
+        # Вычисляем безопасные границы с учетом размера текста
+        # min_x и min_y - минимальные координаты (с отступом)
         min_x = padding
         min_y = padding
-        max_x = max(padding, img_width - text_width - padding)
-        max_y = max(padding, img_height - text_height - padding)
+        
+        # max_x и max_y - максимальные координаты (с учетом размера текста и отступа)
+        # Важно: текст должен полностью помещаться, поэтому вычитаем его размер
+        max_x = img_width - text_width - padding
+        max_y = img_height - text_height - padding
         
         # Проверяем, что есть место для размещения
-        if max_x <= min_x or max_y <= min_y:
-            # Если места мало, размещаем в центре
-            center_x = max(0, min((img_width - text_width) // 2, img_width - text_width))
-            center_y = max(0, min((img_height - text_height) // 2, img_height - text_height))
-            return [(center_x, center_y)]
+        if max_x < min_x or max_y < min_y or text_width > img_width or text_height > img_height:
+            # Если места мало или текст слишком большой, размещаем в безопасном месте
+            # Размещаем в левом верхнем углу с минимальным отступом
+            safe_x = max(0, min(padding, img_width - text_width))
+            safe_y = max(0, min(padding, img_height - text_height))
+            return [(safe_x, safe_y)]
         
         positions = []
         attempts = 0
-        max_attempts = count * 10  # Максимум попыток
+        max_attempts = count * 50  # Увеличиваем количество попыток
         
         while len(positions) < count and attempts < max_attempts:
             attempts += 1
+            # Генерируем случайные координаты в безопасных пределах
             x = rng.uniform(min_x, max_x)
             y = rng.uniform(min_y, max_y)
             
-            # Проверяем, что позиция валидна
-            if (x >= 0 and x <= img_width - text_width and 
-                y >= 0 and y <= img_height - text_height):
+            # Округляем до целых
+            x_int = int(x)
+            y_int = int(y)
+            
+            # Строгая проверка: текст должен полностью помещаться в границы изображения
+            if (x_int >= 0 and 
+                y_int >= 0 and 
+                x_int + text_width <= img_width and 
+                y_int + text_height <= img_height):
+                
                 # Проверяем, что позиция не слишком близко к другим
                 too_close = False
+                min_distance = min(text_width, text_height) * 0.3  # Минимальное расстояние между водяными знаками
+                
                 for existing_pos in positions:
-                    dx = abs(x - existing_pos[0])
-                    dy = abs(y - existing_pos[1])
-                    min_distance = min(text_width, text_height) * 0.5
+                    dx = abs(x_int - existing_pos[0])
+                    dy = abs(y_int - existing_pos[1])
                     if dx < min_distance and dy < min_distance:
                         too_close = True
                         break
                 
                 if not too_close:
-                    positions.append((int(x), int(y)))
+                    positions.append((x_int, y_int))
         
-        # Если не удалось сгенерировать достаточно позиций, добавляем центр
+        # Если не удалось сгенерировать достаточно позиций, добавляем безопасные позиции
         if len(positions) == 0:
-            center_x = max(0, min((img_width - text_width) // 2, img_width - text_width))
-            center_y = max(0, min((img_height - text_height) // 2, img_height - text_height))
-            positions.append((center_x, center_y))
+            # Пробуем разместить в разных углах
+            safe_positions_to_try = [
+                (max(0, min(padding, img_width - text_width)), max(0, min(padding, img_height - text_height))),  # top-left
+                (max(0, min(img_width - text_width - padding, img_width - text_width)), max(0, min(padding, img_height - text_height))),  # top-right
+                (max(0, min(padding, img_width - text_width)), max(0, min(img_height - text_height - padding, img_height - text_height))),  # bottom-left
+                (max(0, min(img_width - text_width - padding, img_width - text_width)), max(0, min(img_height - text_height - padding, img_height - text_height))),  # bottom-right
+            ]
+            
+            for pos in safe_positions_to_try:
+                x, y = pos
+                if (x >= 0 and y >= 0 and 
+                    x + text_width <= img_width and 
+                    y + text_height <= img_height):
+                    positions.append(pos)
+                    if len(positions) >= count:
+                        break
         
-        return positions
+        # Финальная проверка: фильтруем позиции, чтобы убедиться что все в пределах границ
+        safe_positions = []
+        for pos in positions:
+            x, y = pos
+            # Строгая проверка границ
+            if (x >= 0 and 
+                y >= 0 and 
+                x + text_width <= img_width and 
+                y + text_height <= img_height):
+                safe_positions.append(pos)
+        
+        # Если все позиции отфильтровались, возвращаем хотя бы одну безопасную
+        if not safe_positions:
+            # Размещаем в левом верхнем углу с минимальным отступом
+            safe_x = max(0, min(padding, img_width - text_width))
+            safe_y = max(0, min(padding, img_height - text_height))
+            safe_positions = [(safe_x, safe_y)]
+        
+        return safe_positions
     
     @staticmethod
     def _get_font(size: int) -> ImageFont.FreeTypeFont:
@@ -311,19 +356,34 @@ class WatermarkService:
         text_size: tuple,
         position: str
     ) -> tuple:
-        """Вычисление позиции текста"""
+        """Вычисление позиции текста с проверкой границ"""
         img_width, img_height = image_size
         text_width, text_height = text_size
         
+        padding = 10
+        
         if position == "center":
-            return ((img_width - text_width) // 2, (img_height - text_height) // 2)
+            x = max(0, min((img_width - text_width) // 2, img_width - text_width))
+            y = max(0, min((img_height - text_height) // 2, img_height - text_height))
+            return (x, y)
         elif position == "top-left":
-            return (10, 10)
+            x = max(0, min(padding, img_width - text_width))
+            y = max(0, min(padding, img_height - text_height))
+            return (x, y)
         elif position == "top-right":
-            return (img_width - text_width - 10, 10)
+            x = max(0, min(img_width - text_width - padding, img_width - text_width))
+            y = max(0, min(padding, img_height - text_height))
+            return (x, y)
         elif position == "bottom-left":
-            return (10, img_height - text_height - 10)
+            x = max(0, min(padding, img_width - text_width))
+            y = max(0, min(img_height - text_height - padding, img_height - text_height))
+            return (x, y)
         elif position == "bottom-right":
-            return (img_width - text_width - 10, img_height - text_height - 10)
+            x = max(0, min(img_width - text_width - padding, img_width - text_width))
+            y = max(0, min(img_height - text_height - padding, img_height - text_height))
+            return (x, y)
         else:
-            return ((img_width - text_width) // 2, (img_height - text_height) // 2)
+            # По умолчанию центр с проверкой границ
+            x = max(0, min((img_width - text_width) // 2, img_width - text_width))
+            y = max(0, min((img_height - text_height) // 2, img_height - text_height))
+            return (x, y)

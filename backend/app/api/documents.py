@@ -5,6 +5,7 @@ import os
 import json
 import hashlib
 import secrets
+import logging
 from pathlib import Path
 from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form, Request
@@ -18,6 +19,8 @@ from app.services.watermark import WatermarkService
 from app.core.config import settings
 from datetime import datetime, timedelta
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -29,95 +32,120 @@ async def upload_document(
     db: Session = Depends(get_db)
 ):
     """Загрузка документа"""
-    # Проверка типа файла
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in ['.pdf', '.ppt', '.pptx']:
-        raise HTTPException(status_code=400, detail="Поддерживаются только PDF, PPT, PPTX файлы")
-    
-    # Чтение файла
-    contents = await file.read()
-    
-    if len(contents) > settings.MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="Файл слишком большой")
-    
-    # Генерация хеша
-    file_hash = hashlib.md5(contents).hexdigest()
-    
-    # Проверка на дубликат
-    existing_doc = db.query(Document).filter(Document.file_hash == file_hash).first()
-    if existing_doc:
-        watermark_settings = None
-        if existing_doc.watermark_settings:
-            try:
-                watermark_settings = json.loads(existing_doc.watermark_settings)
-            except:
-                pass
-        return DocumentResponse(
-            id=existing_doc.id,
-            name=existing_doc.name,
-            file_type=existing_doc.file_type,
-            total_pages=existing_doc.total_pages,
-            access_token=existing_doc.access_token,
-            created_at=existing_doc.created_at,
-            watermark_settings=watermark_settings
-        )
-    
-    # Сохранение файла
-    safe_filename = "".join(c for c in file.filename if c.isalnum() or c in ".-_")
-    file_path = os.path.join(settings.UPLOAD_DIR, f"{file_hash}_{safe_filename}")
-    
-    with open(file_path, 'wb') as f:
-        f.write(contents)
-    
-    # Конвертация в изображения
-    file_type = file_ext[1:]  # убираем точку
-    output_dir = os.path.join(settings.CACHE_DIR, file_hash)
-    
     try:
-        images = DocumentConverter.convert_to_images(file_path, file_type, output_dir)
-        total_pages = len(images)
-    except Exception as e:
-        os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"Ошибка конвертации: {str(e)}")
-    
-    # Парсинг настроек водяных знаков
-    watermark_config = None
-    if watermark_settings:
+        # Проверка типа файла
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Имя файла не указано")
+        
+        file_ext = Path(file.filename).suffix.lower()
+        if file_ext not in ['.pdf', '.ppt', '.pptx']:
+            raise HTTPException(status_code=400, detail="Поддерживаются только PDF, PPT, PPTX файлы")
+        
+        # Чтение файла
+        contents = await file.read()
+        
+        if len(contents) > settings.MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail="Файл слишком большой")
+        
+        # Генерация хеша
+        file_hash = hashlib.md5(contents).hexdigest()
+        
+        # Проверка на дубликат
+        existing_doc = db.query(Document).filter(Document.file_hash == file_hash).first()
+        if existing_doc:
+            watermark_settings = None
+            if existing_doc.watermark_settings:
+                try:
+                    watermark_settings = json.loads(existing_doc.watermark_settings)
+                except:
+                    pass
+            return DocumentResponse(
+                id=existing_doc.id,
+                name=existing_doc.name,
+                file_type=existing_doc.file_type,
+                total_pages=existing_doc.total_pages,
+                access_token=existing_doc.access_token,
+                created_at=existing_doc.created_at,
+                watermark_settings=watermark_settings
+            )
+        
+        # Сохранение файла
+        safe_filename = "".join(c for c in file.filename if c.isalnum() or c in ".-_")
+        file_path = os.path.join(settings.UPLOAD_DIR, f"{file_hash}_{safe_filename}")
+        
+        # Создаем директорию, если её нет
+        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+        
+        with open(file_path, 'wb') as f:
+            f.write(contents)
+        
+        # Конвертация в изображения
+        file_type = file_ext[1:]  # убираем точку
+        output_dir = os.path.join(settings.CACHE_DIR, file_hash)
+        
+        # Создаем директорию для кеша, если её нет
+        os.makedirs(output_dir, exist_ok=True)
+        
         try:
-            watermark_config = json.loads(watermark_settings)
-        except:
-            pass
-    
-    if not watermark_config:
-        watermark_config = WatermarkSettings().dict()
-    
-    # Создание документа в БД
-    access_token = secrets.token_urlsafe(32)
-    
-    doc = Document(
-        name=name or safe_filename,
-        file_path=file_path,
-        file_hash=file_hash,
-        file_type=file_type,
-        total_pages=total_pages,
-        access_token=access_token,
-        watermark_settings=json.dumps(watermark_config) if watermark_config else None,
-        created_by="api"
-    )
-    
-    db.add(doc)
-    db.commit()
-    db.refresh(doc)
-    
-    return DocumentResponse(
-        id=doc.id,
-        name=doc.name,
-        file_type=doc.file_type,
-        total_pages=doc.total_pages,
-        access_token=doc.access_token,
-        created_at=doc.created_at,
-        watermark_settings=watermark_config
-    )
+            images = DocumentConverter.convert_to_images(file_path, file_type, output_dir)
+            total_pages = len(images)
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Conversion error: {error_trace}")
+            print(f"[ERROR] Conversion error: {error_trace}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise HTTPException(status_code=500, detail=f"Ошибка конвертации: {str(e)}")
+        
+        # Парсинг настроек водяных знаков
+        watermark_config = None
+        if watermark_settings:
+            try:
+                watermark_config = json.loads(watermark_settings)
+            except Exception as e:
+                logger.warning(f"Failed to parse watermark settings: {e}")
+                print(f"[WARN] Failed to parse watermark settings: {e}")
+                pass
+        
+        if not watermark_config:
+            watermark_config = WatermarkSettings().dict()
+        
+        # Создание документа в БД
+        access_token = secrets.token_urlsafe(32)
+        
+        doc = Document(
+            name=name or safe_filename,
+            file_path=file_path,
+            file_hash=file_hash,
+            file_type=file_type,
+            total_pages=total_pages,
+            access_token=access_token,
+            watermark_settings=json.dumps(watermark_config) if watermark_config else None,
+            created_by="api"
+        )
+        
+        db.add(doc)
+        db.commit()
+        db.refresh(doc)
+        
+        return DocumentResponse(
+            id=doc.id,
+            name=doc.name,
+            file_type=doc.file_type,
+            total_pages=doc.total_pages,
+            access_token=doc.access_token,
+            created_at=doc.created_at,
+            watermark_settings=watermark_config
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Upload error: {error_trace}")
+        print(f"[ERROR] Upload error: {error_trace}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки: {str(e)}")
 
 
 @router.get("/", response_model=List[DocumentResponse])
@@ -291,7 +319,21 @@ async def get_page_image(
     
     # Если изображение с водяными знаками уже существует, возвращаем его
     if os.path.exists(watermarked_path):
-        return FileResponse(watermarked_path, media_type="image/png")
+        # Читаем файл полностью в память для гарантии правильного Content-Length
+        # Это решает проблему ERR_CONTENT_LENGTH_MISMATCH
+        with open(watermarked_path, 'rb') as f:
+            img_bytes = f.read()
+        
+        from fastapi import Response
+        return Response(
+            content=img_bytes,
+            media_type="image/png",
+            headers={
+                "Content-Length": str(len(img_bytes)),
+                "Cache-Control": "public, max-age=3600",
+                "Accept-Ranges": "bytes"
+            }
+        )
     
     # Иначе создаем изображение с водяными знаками
     try:
@@ -356,10 +398,31 @@ async def get_page_image(
         # Восстанавливаем настройку
         watermark_settings.dynamic_watermark_enabled = original_dynamic_enabled
         
-        # Сохраняем
-        watermarked_image.save(watermarked_path, 'PNG', quality=95)
+        # Сохраняем в BytesIO сначала, чтобы получить точный размер
+        import io
+        img_io = io.BytesIO()
+        watermarked_image.save(img_io, 'PNG', quality=95, optimize=True)
+        img_bytes = img_io.getvalue()
+        img_size = len(img_bytes)
         
-        return FileResponse(watermarked_path, media_type="image/png")
+        # Сохраняем на диск для кеширования
+        try:
+            with open(watermarked_path, 'wb') as f:
+                f.write(img_bytes)
+        except Exception as e:
+            print(f"[WARN] Failed to save watermarked image to cache: {e}")
+        
+        # Возвращаем Response с байтами из памяти - это гарантирует правильный Content-Length
+        from fastapi import Response
+        return Response(
+            content=img_bytes,
+            media_type="image/png",
+            headers={
+                "Content-Length": str(img_size),
+                "Cache-Control": "public, max-age=3600",
+                "Accept-Ranges": "bytes"
+            }
+        )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка обработки изображения: {str(e)}")

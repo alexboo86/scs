@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход в админ-панель</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .login-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .login-header h1 {
+            color: #2c3e50;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .login-header p {
+            color: #7f8c8d;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #2c3e50;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .btn-login {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-login:active {
+            transform: translateY(0);
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .alert-error {
+            background: #fee;
+            color: #c33;
+            border: 1px solid #fcc;
+        }
+        
+        .alert-info {
+            background: #e3f2fd;
+            color: #1976d2;
+            border: 1px solid #90caf9;
+        }
+        
+        .default-credentials {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .default-credentials strong {
+            color: #e74c3c;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🔐 Админ-панель</h1>
+            <p>Войдите для доступа к управлению</p>
+        </div>
+        
+        <div id="alertContainer"></div>
+        
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label for="username">Имя пользователя:</label>
+                <input type="text" id="username" name="username" required autofocus>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Пароль:</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            
+            <button type="submit" class="btn-login">Войти</button>
+        </form>
+        
+        <div class="default-credentials">
+            <strong>⚠️ По умолчанию:</strong><br>
+            Username: <code>admin</code><br>
+            Password: <code>admin123</code><br>
+            <small>Измените пароль после первого входа!</small>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = window.location.origin;
+        
+        function showAlert(message, type = 'error') {
+            const container = document.getElementById('alertContainer');
+            container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
+        
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            const formData = new FormData();
+            formData.append('username', username);
+            formData.append('password', password);
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        // JSON ответ (AJAX)
+                        const data = await response.json();
+                        if (data.token) {
+                            localStorage.setItem('admin_token', data.token);
+                        }
+                        window.location.href = data.redirect || '/api/admin/';
+                    } else {
+                        // HTML ответ (обычная форма)
+                        const html = await response.text();
+                        
+                        // Парсим токен из HTML ответа
+                        const tokenMatch = html.match(/localStorage\.setItem\('admin_token',\s*'([^']+)'\)/);
+                        if (tokenMatch) {
+                            const token = tokenMatch[1];
+                            localStorage.setItem('admin_token', token);
+                        }
+                        
+                        // Прямой редирект на админ панель
+                        window.location.href = '/api/admin/';
+                    }
+                } else {
+                    const error = await response.json();
+                    showAlert(error.detail || 'Ошибка авторизации');
+                }
+            } catch (error) {
+                showAlert('Ошибка подключения: ' + error.message);
+            }
+        }
+        
+        // Проверяем, есть ли уже токен (автоматический вход)
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = localStorage.getItem('admin_token');
+            if (token) {
+                // Проверяем валидность токена
+                fetch(`${API_BASE}/api/admin/`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                })
+                .then(response => {
+                    if (response.ok) {
+                        window.location.href = '/api/admin/';
+                    } else {
+                        localStorage.removeItem('admin_token');
+                    }
+                })
+                .catch(() => {
+                    localStorage.removeItem('admin_token');
+                });
+            }
+        });
+    </script>
+</body>
+</html>

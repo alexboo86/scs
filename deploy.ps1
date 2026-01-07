@@ -5,7 +5,8 @@
 param(
     [string]$VPS_IP = "89.110.111.184",
     [string]$VPS_USER = "root",
-    [string]$PROJECT_DIR = "secure-content-service"
+    [string]$PROJECT_DIR = "secure-content-service",
+    [string]$VPS_PASSWORD = "vE1x~!56#8nF36p8dLGW"
 )
 
 $ErrorActionPreference = "Stop"
@@ -30,18 +31,39 @@ function Write-Step {
     Write-Host "[STEP] $Message" -ForegroundColor Blue
 }
 
+# Функция для выполнения SSH команд
+function Invoke-SSHCommand {
+    param([string]$Command)
+    
+    # Пробуем использовать plink (PuTTY) для автоматического ввода пароля
+    if (Get-Command plink -ErrorAction SilentlyContinue) {
+        $plinkCmd = "echo y | plink -ssh -pw `"$VPS_PASSWORD`" ${VPS_USER}@${VPS_IP} `"$Command`""
+        Invoke-Expression $plinkCmd
+    } else {
+        # Используем обычный ssh (потребует ввода пароля вручную или SSH ключи)
+        ssh "${VPS_USER}@${VPS_IP}" $Command
+    }
+}
+
 # Проверка подключения
 Write-Step "Checking VPS connection..."
 try {
-    $null = ssh -o ConnectTimeout=5 "${VPS_USER}@${VPS_IP}" "echo 'Connected'" 2>&1
-    Write-Info "Connection established"
+    $testResult = Invoke-SSHCommand "echo 'Connected'"
+    if ($LASTEXITCODE -eq 0 -or $testResult) {
+        Write-Info "Connection established"
+    } else {
+        Write-Error "Failed to connect to VPS. Check IP address and SSH access."
+        exit 1
+    }
 } catch {
     Write-Error "Failed to connect to VPS. Check IP address and SSH access."
+    Write-Info "Tip: Setup SSH keys using: .\setup-ssh-keys.ps1"
     exit 1
 }
 
-# Путь к проекту
-$PROJECT_PATH = "D:\WORK\secure-content-service"
+# Определяем путь к проекту автоматически (откуда запущен скрипт)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PROJECT_PATH = $ScriptDir
 
 # Проверка существования пути
 if (-not (Test-Path $PROJECT_PATH)) {
@@ -106,6 +128,6 @@ echo ''
 echo 'Deployment complete!'
 "@
 
-ssh "${VPS_USER}@${VPS_IP}" $commands
+Invoke-SSHCommand $commands
 
 Write-Info "Done! Project updated on VPS"
