@@ -309,7 +309,8 @@ def main():
     items_to_sync = [
         "backend/app",
         "frontend/templates",
-        "docker-compose.yml"
+        "docker-compose.yml",
+        "nginx.conf"
     ]
     
     print("[INFO] Syncing files...")
@@ -382,6 +383,27 @@ def main():
         # Показываем последние логи
         print("\n[INFO] Recent logs (last 20 lines):")
         execute_ssh_command(ssh_client, f"cd {VPS_PROJECT_PATH} && docker-compose logs --tail=20 backend", timeout=30)
+    
+    # Проверяем, был ли обновлен nginx.conf
+    nginx_updated = False
+    for item in items_to_sync:
+        if item == "nginx.conf":
+            nginx_updated = True
+            break
+    
+    # Если nginx.conf был обновлен, перезагружаем nginx
+    if nginx_updated:
+        print("\n[INFO] nginx.conf was updated, reloading nginx...")
+        success, output, error = execute_ssh_command(
+            ssh_client, 
+            "sudo nginx -t && sudo systemctl reload nginx",
+            timeout=30
+        )
+        if success:
+            print("[INFO] Nginx reloaded successfully")
+        else:
+            print(f"[WARN] Failed to reload nginx: {error}")
+            print("[INFO] You may need to reload nginx manually: sudo systemctl reload nginx")
     
     # Закрываем соединение
     ssh_client.close()

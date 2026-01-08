@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- КРИТИЧЕСКИ ВАЖНО: Принудительное использование HTTPS для всех запросов -->
+    <!-- Это предотвращает mixed content ошибки в Safari на iOS -->
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests; default-src https: data: blob: 'unsafe-inline' 'unsafe-eval';">
     <title>Защищенный просмотр</title>
     <style>
         * {
@@ -265,9 +268,14 @@
     
     <script>
         // Конфигурация
+        // КРИТИЧЕСКИ ВАЖНО: Для мобильных устройств используем абсолютный HTTPS URL
+        // Это предотвращает mixed content ошибки в Safari на iOS
+        const isMobileDevice = /iPhone|iPad|iPod|Android|Mobile|BlackBerry|Windows Phone|Opera Mini|Palm/i.test(navigator.userAgent);
+        const apiBaseUrl = {% if api_base_url %}'{{ api_base_url }}/api'{% else %}(isMobileDevice ? 'https://lessons.incrypto.ru/api' : '/api'){% endif %};
+        
         const CONFIG = {
             token: new URLSearchParams(window.location.search).get('token') || '',
-            apiBase: '/api',
+            apiBase: apiBaseUrl,
             currentPage: 1,
             totalPages: 1,
             zoomLevel: 1.0,
@@ -279,6 +287,44 @@
                 ip_address: null
             }
         };
+        
+        // Дополнительная проверка для мобильных устройств
+        if (isMobileDevice && CONFIG.apiBase.startsWith('/')) {
+            // Если относительный путь и мобильное устройство, принудительно используем HTTPS
+            const currentOrigin = window.location.origin;
+            if (currentOrigin.startsWith('http://')) {
+                CONFIG.apiBase = currentOrigin.replace('http://', 'https://') + CONFIG.apiBase;
+            } else {
+                CONFIG.apiBase = currentOrigin + CONFIG.apiBase;
+            }
+            console.log('[VIEWER] MOBILE: Fixed API base to HTTPS:', CONFIG.apiBase);
+        }
+        
+        // КРИТИЧЕСКИ ВАЖНО: Принудительно исправляем все относительные URL на HTTPS
+        // Это особенно важно для мобильных устройств
+        function ensureHttpsUrl(url) {
+            if (!url) return url;
+            // Если URL начинается с http://, заменяем на https://
+            if (url.startsWith('http://')) {
+                return url.replace('http://', 'https://');
+            }
+            // Если относительный URL и текущая страница HTTPS, используем текущий origin
+            if (url.startsWith('/') && window.location.protocol === 'https:') {
+                return window.location.origin + url;
+            }
+            // Если относительный URL без слэша и текущая страница HTTPS
+            if (!url.startsWith('http') && window.location.protocol === 'https:') {
+                return window.location.origin + '/' + url;
+            }
+            return url;
+        }
+        
+        // Переопределяем CONFIG.apiBase для гарантии HTTPS
+        CONFIG.apiBase = ensureHttpsUrl(CONFIG.apiBase);
+        
+        console.log('[VIEWER] API Base configured:', CONFIG.apiBase, 'Mobile:', isMobileDevice);
+        console.log('[VIEWER] Current location:', window.location.href);
+        console.log('[VIEWER] Current protocol:', window.location.protocol);
         
         // Анимация водяного знака
         let watermarkAnimation = null;
@@ -675,7 +721,9 @@
                 // const imageUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
                 
                 // Временный URL для тестирования
-                const imageUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+                let imageUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+                // КРИТИЧЕСКИ ВАЖНО: Принудительно используем HTTPS для изображений
+                imageUrl = ensureHttpsUrl(imageUrl);
                 
                 const img = document.getElementById('pageImage');
                 const container = document.getElementById('pageContainer');
@@ -802,7 +850,10 @@
         
         function preloadPage(pageNumber) {
             const img = new Image();
-            img.src = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+            let preloadUrl = `${CONFIG.apiBase}/documents/${CONFIG.documentId}/page/${pageNumber}?viewer_token=${CONFIG.token}`;
+            // КРИТИЧЕСКИ ВАЖНО: Принудительно используем HTTPS
+            preloadUrl = ensureHttpsUrl(preloadUrl);
+            img.src = preloadUrl;
         }
         
         function previousPage() {

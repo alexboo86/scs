@@ -17,6 +17,20 @@ from app.core.config import settings
 
 router = APIRouter()
 
+def is_mobile_device(user_agent: Optional[str]) -> bool:
+    """Определяет, является ли устройство мобильным"""
+    if not user_agent:
+        return False
+    
+    user_agent_lower = user_agent.lower()
+    mobile_keywords = [
+        'iphone', 'ipad', 'ipod', 'android', 'mobile', 
+        'blackberry', 'windows phone', 'opera mini', 'palm'
+    ]
+    
+    return any(keyword in user_agent_lower for keyword in mobile_keywords)
+
+
 def get_client_ip(request: Request) -> str:
     """Получает реальный IP адрес клиента из заголовков"""
     ip_headers = [
@@ -349,6 +363,28 @@ async def viewer_page(token: str, request: Request, db: Session = Depends(get_db
         except:
             pass
     
+    # Определяем, является ли устройство мобильным
+    user_agent = request.headers.get("user-agent", "")
+    is_mobile = is_mobile_device(user_agent)
+    
+    # Формируем base_url для API запросов (всегда HTTPS, особенно для мобильных)
+    host = request.headers.get("Host", request.url.hostname) or "lessons.incrypto.ru"
+    host_str = str(host).lower().strip()
+    
+    # Убираем порт из host если есть
+    if ':' in host_str:
+        host_str = host_str.split(':')[0]
+        host = host.split(':')[0]
+    
+    # ВСЕГДА используем HTTPS, особенно для мобильных устройств
+    if "lessons.incrypto.ru" in host_str or host_str == "lessons.incrypto.ru":
+        api_base_url = "https://lessons.incrypto.ru"
+    else:
+        api_base_url = f"https://{host}".rstrip('/')
+    
+    if is_mobile:
+        print(f"[VIEWER] Mobile device detected, forcing HTTPS API base: {api_base_url}")
+    
     context = {
         "request": request,
         "token": token,
@@ -358,14 +394,26 @@ async def viewer_page(token: str, request: Request, db: Session = Depends(get_db
         "user_email": user.email if user else None,
         "user_id": str(session.user_id) if session.user_id else None,
         "ip_address": session.ip_address or "127.0.0.1",
-        "watermark_settings": watermark_settings
+        "watermark_settings": watermark_settings,
+        "api_base_url": api_base_url,  # Передаем абсолютный HTTPS URL
+        "is_mobile": is_mobile  # Флаг для мобильных устройств
     }
     
     # Переинициализируем templates на случай hot-reload
     current_templates = get_templates()
     if current_templates:
         try:
-            return current_templates.TemplateResponse("viewer.html", context)
+            response = current_templates.TemplateResponse("viewer.html", context)
+            # КРИТИЧЕСКИ ВАЖНО: Принудительно устанавливаем HTTPS заголовки для мобильных устройств
+            # Это предотвращает mixed content ошибки в Safari на iOS
+            response.headers["Content-Security-Policy"] = "upgrade-insecure-requests; default-src https:"
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            # Принудительно указываем, что это HTTPS соединение
+            if is_mobile:
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "SAMEORIGIN"
+                print(f"[VIEWER] Mobile device detected, added HTTPS security headers")
+            return response
         except Exception as e:
             import traceback
             error_msg = f"Template rendering error: {str(e)}\n{traceback.format_exc()}"
@@ -603,8 +651,16 @@ async def embed_viewer(
     host = request.headers.get("Host", request.url.hostname) or "lessons.incrypto.ru"
     host_str = str(host).lower().strip()
     
+    # Определяем, является ли устройство мобильным
+    user_agent = request.headers.get("user-agent", "")
+    is_mobile = is_mobile_device(user_agent)
+    
+    if is_mobile:
+        print(f"[EMBED] Mobile device detected: {user_agent[:100]}")
+    
     # КРИТИЧЕСКИ ВАЖНО: ВСЕГДА используем HTTPS для production домена
     # Это необходимо для работы через HTTPS сайты (Tilda) и предотвращения Mixed Content ошибок
+    # Особенно важно для мобильных устройств (iOS Safari строго блокирует mixed content)
     # Убираем порт из host если есть (например, lessons.incrypto.ru:8000 -> lessons.incrypto.ru)
     if ':' in host_str:
         host_str = host_str.split(':')[0]
@@ -612,15 +668,24 @@ async def embed_viewer(
     
     # ПРИНУДИТЕЛЬНО используем HTTPS для lessons.incrypto.ru
     # Не зависим от request.url.scheme, так как он может быть HTTP из-за прокси
+    # Для мобильных устройств ВСЕГДА используем HTTPS
     if "lessons.incrypto.ru" in host_str or host_str == "lessons.incrypto.ru":
         base_url = "https://lessons.incrypto.ru"
-        print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain: {base_url}")
+        if is_mobile:
+            print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain (MOBILE): {base_url}")
+        else:
+            print(f"[EMBED] FORCED HTTPS for lessons.incrypto.ru domain: {base_url}")
     else:
         # Для других доменов всегда используем HTTPS по умолчанию
+        # Для мобильных устройств принудительно HTTPS
         base_url = f"https://{host}".rstrip('/')
-        print(f"[EMBED] Using HTTPS for domain: {host} -> {base_url}")
+        if is_mobile:
+            print(f"[EMBED] Using HTTPS for domain (MOBILE): {host} -> {base_url}")
+        else:
+            print(f"[EMBED] Using HTTPS for domain: {host} -> {base_url}")
     
     # Дополнительная проверка: убеждаемся, что base_url всегда HTTPS
+    # Особенно важно для мобильных устройств
     if base_url.startswith("http://"):
         base_url = base_url.replace("http://", "https://")
         print(f"[EMBED] WARNING: Fixed HTTP to HTTPS: {base_url}")
@@ -639,12 +704,31 @@ async def embed_viewer(
     print(f"[EMBED] Final scheme: {scheme}")
     # Финальная проверка и исправление URL
     final_viewer_url = f"{base_url}{viewer_url}"
+    
+    # КРИТИЧЕСКИ ВАЖНО: Принудительно исправляем HTTP на HTTPS
+    # Это особенно важно для мобильных устройств (iOS Safari)
     if final_viewer_url.startswith("http://"):
         final_viewer_url = final_viewer_url.replace("http://", "https://")
         print(f"[EMBED] WARNING: Final URL was HTTP, fixed to: {final_viewer_url}")
     
+    # Дополнительная проверка: убеждаемся, что URL всегда HTTPS
+    if not final_viewer_url.startswith("https://"):
+        # Если URL не начинается с https://, добавляем его
+        if final_viewer_url.startswith("//"):
+            final_viewer_url = "https:" + final_viewer_url
+        elif final_viewer_url.startswith("/"):
+            final_viewer_url = base_url + final_viewer_url
+        else:
+            final_viewer_url = "https://" + final_viewer_url
+        print(f"[EMBED] WARNING: URL didn't start with https://, fixed to: {final_viewer_url}")
+    
+    # Убираем возможный двойной слэш после домена
+    final_viewer_url = final_viewer_url.replace("https://lessons.incrypto.ru//", "https://lessons.incrypto.ru/")
+    
     print(f"[EMBED] Final base_url: {base_url}")
     print(f"[EMBED] Final viewer URL: {final_viewer_url}")
+    print(f"[EMBED] Is mobile: {is_mobile}")
+    print(f"[EMBED] User-Agent: {user_agent[:100] if user_agent else 'None'}")
     
     # Создаем ответ с заголовками для принудительного использования HTTPS
     response = HTMLResponse(f"""
@@ -725,15 +809,63 @@ async def embed_viewer(
                 }}
                 
                 // Если URL относительный, делаем абсолютный с HTTPS
+                // Используем base_url из сервера вместо хардкода
                 if (!httpsUrl.startsWith('http')) {{
-                    httpsUrl = 'https://lessons.incrypto.ru' + (httpsUrl.startsWith('/') ? httpsUrl : '/' + httpsUrl);
+                    const baseUrl = '{base_url}';
+                    httpsUrl = baseUrl + (httpsUrl.startsWith('/') ? httpsUrl : '/' + httpsUrl);
                     console.log('[EMBED] Converting relative to HTTPS:', viewerUrl, '->', httpsUrl);
                 }}
                 
+                // Дополнительная проверка для мобильных устройств
+                const isMobile = /iPhone|iPad|iPod|Android|Mobile|BlackBerry|Windows Phone|Opera Mini|Palm/i.test(navigator.userAgent);
+                if (isMobile) {{
+                    // Для мобильных устройств принудительно используем HTTPS
+                    if (httpsUrl.startsWith('http://')) {{
+                        httpsUrl = httpsUrl.replace('http://', 'https://');
+                        console.log('[EMBED] MOBILE: Forced HTTPS conversion:', httpsUrl);
+                    }}
+                    // Убираем возможный двойной слэш
+                    httpsUrl = httpsUrl.replace(/(https?:\/\/[^\/]+)\/\//, '$1/');
+                }}
+                
+                // КРИТИЧЕСКИ ВАЖНО: Финальная проверка - убеждаемся, что URL всегда HTTPS
+                if (!httpsUrl.startsWith('https://')) {{
+                    if (httpsUrl.startsWith('//')) {{
+                        httpsUrl = 'https:' + httpsUrl;
+                    }} else if (httpsUrl.startsWith('/')) {{
+                        httpsUrl = '{base_url}' + httpsUrl;
+                    }} else {{
+                        httpsUrl = 'https://' + httpsUrl;
+                    }}
+                    console.log('[EMBED] Final HTTPS fix:', httpsUrl);
+                }}
+                
+                // Убираем возможный двойной слэш после домена
+                httpsUrl = httpsUrl.replace(/(https:\/\/[^\/]+)\/\//, '$1/');
+                
                 // Устанавливаем URL
                 console.log('[EMBED] Setting iframe src to:', httpsUrl);
+                console.log('[EMBED] Is mobile device:', isMobile);
                 iframe.src = httpsUrl;
                 iframe.setAttribute('src', httpsUrl);
+                
+                // КРИТИЧЕСКИ ВАЖНО: Дополнительная проверка через MutationObserver для мобильных устройств
+                if (isMobile) {{
+                    const observer = new MutationObserver(function(mutations) {{
+                        mutations.forEach(function(mutation) {{
+                            if (mutation.type === 'attributes' && mutation.attributeName === 'src') {{
+                                const currentSrc = iframe.src || iframe.getAttribute('src');
+                                if (currentSrc && currentSrc.startsWith('http://')) {{
+                                    console.error('[EMBED] MOBILE: Detected HTTP URL change, fixing:', currentSrc);
+                                    const fixedSrc = currentSrc.replace('http://', 'https://');
+                                    iframe.src = fixedSrc;
+                                    iframe.setAttribute('src', fixedSrc);
+                                }}
+                            }}
+                        }});
+                    }});
+                    observer.observe(iframe, {{ attributes: true, attributeFilter: ['src'] }});
+                }}
                 
                 // Дополнительная проверка через небольшую задержку
                 setTimeout(function() {{

@@ -36,6 +36,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Middleware для принудительного использования HTTPS
+class ForceHttpsMiddleware(BaseHTTPMiddleware):
+    """Принудительно устанавливает HTTPS схему для всех запросов"""
+    async def dispatch(self, request: Request, call_next):
+        # Проверяем X-Forwarded-Proto или Host для определения HTTPS
+        forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+        host = request.headers.get("Host", "")
+        
+        # Если запрос идет через HTTPS (определяем по заголовкам или домену)
+        is_https = (
+            forwarded_proto == "https" or
+            host.startswith("lessons.incrypto.ru") or
+            "lessons.incrypto.ru" in host
+        )
+        
+        # Принудительно устанавливаем HTTPS схему в URL
+        if is_https and request.url.scheme == "http":
+            # Создаем новый URL с HTTPS схемой
+            from starlette.datastructures import URL
+            new_url = URL(
+                scheme="https",
+                netloc=request.url.netloc,
+                path=request.url.path,
+                query=request.url.query,
+                fragment=request.url.fragment
+            )
+            # Заменяем URL в request
+            request.scope["scheme"] = "https"
+            request._url = new_url
+        
+        response = await call_next(request)
+        return response
+
+app.add_middleware(ForceHttpsMiddleware)
+
 # Middleware для добавления заголовков безопасности для iframe
 class FrameOptionsMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -47,7 +82,7 @@ class FrameOptionsMiddleware(BaseHTTPMiddleware):
             if "X-Frame-Options" in response.headers:
                 del response.headers["X-Frame-Options"]
             # Разрешаем встраивание через Content-Security-Policy
-            response.headers["Content-Security-Policy"] = "frame-ancestors *;"
+            response.headers["Content-Security-Policy"] = "frame-ancestors *; upgrade-insecure-requests;"
         return response
 
 app.add_middleware(FrameOptionsMiddleware)
