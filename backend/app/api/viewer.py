@@ -785,6 +785,10 @@ async def embed_viewer(
             src="{final_viewer_url}"
             frameborder="0"
             allowfullscreen
+            allow="fullscreen"
+            webkitallowfullscreen
+            mozallowfullscreen
+            msallowfullscreen
             style="display: none; width: 100%; height: 100%; border: none; margin: 0; padding: 0;"
             sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
             loading="eager"
@@ -891,6 +895,534 @@ async def embed_viewer(
                     }}
                 }});
             }})();
+        </script>
+        <script>
+            // Обработчик сообщений от viewer для полноэкранного режима
+            window.addEventListener('message', function(event) {{
+                // Проверяем источник сообщения (должен быть с нашего домена)
+                const allowedOrigins = ['https://lessons.incrypto.ru', 'http://lessons.incrypto.ru'];
+                const isAllowedOrigin = allowedOrigins.some(origin => event.origin.includes(origin.replace('https://', '').replace('http://', '')));
+                
+                if (!isAllowedOrigin) {{
+                    console.log('[EMBED] Message from unauthorized origin:', event.origin);
+                    return;
+                }}
+                
+                console.log('[EMBED] Received message:', event.data, 'from:', event.origin);
+                
+                if (event.data && event.data.type === 'request-fullscreen') {{
+                    const iframe = document.getElementById('viewerFrame');
+                    if (!iframe) {{
+                        console.error('[EMBED] Iframe not found');
+                        return;
+                    }}
+                    
+                    if (event.data.action === 'enter') {{
+                        // Входим в полноэкранный режим
+                        console.log('[EMBED] Entering fullscreen mode for iframe');
+                        
+                        // Получаем размеры экрана из сообщения или определяем сами
+                        const requestedScreenWidth = event.data.screenWidth || window.screen.width || window.innerWidth;
+                        const requestedScreenHeight = event.data.screenHeight || window.screen.height || window.innerHeight;
+                        
+                        // КРИТИЧЕСКИ ВАЖНО: Для мобильных устройств используем window.open для открытия viewer в новом окне
+                        // Это самый надежный способ обойти ограничения контейнера Tilda на iOS
+                        const isMobile = /iPhone|iPad|iPod|Android|Mobile|BlackBerry|Windows Phone|Opera Mini|Palm/i.test(navigator.userAgent);
+                        
+                        if (isMobile) {{
+                            console.log('[EMBED] Mobile device detected, opening viewer in new window');
+                            // Получаем URL viewer из iframe
+                            const viewerUrl = iframe.src;
+                            if (viewerUrl) {{
+                                // Открываем viewer в новом окне на весь экран
+                                const newWindow = window.open(
+                                    viewerUrl,
+                                    '_blank',
+                                    'fullscreen=yes,location=no,menubar=no,scrollbars=yes,status=no,toolbar=no,width=' + requestedScreenWidth + ',height=' + requestedScreenHeight
+                                );
+                                
+                                if (newWindow) {{
+                                    console.log('[EMBED] Viewer opened in new window - NOT applying CSS changes to iframe');
+                                    // Отправляем подтверждение viewer
+                                    iframe.contentWindow.postMessage({{
+                                        type: 'fullscreen-response',
+                                        success: true,
+                                        screenWidth: requestedScreenWidth,
+                                        screenHeight: requestedScreenHeight,
+                                        openedInNewWindow: true
+                                    }}, '*');
+                                    
+                                    // Скрываем текущий iframe (но НЕ применяем CSS изменения)
+                                    iframe.style.display = 'none';
+                                    
+                                    // Сохраняем ссылку на новое окно для закрытия при выходе
+                                    window.fullscreenWindow = newWindow;
+                                    
+                                    // Слушаем закрытие нового окна
+                                    const checkClosed = setInterval(() => {{
+                                        if (newWindow.closed) {{
+                                            clearInterval(checkClosed);
+                                            console.log('[EMBED] New window closed, restoring iframe');
+                                            
+                                            // КРИТИЧЕСКИ ВАЖНО: Если iframe был перемещен в body, возвращаем его обратно
+                                            if (window.originalIframeParent && iframe.parentElement === document.body) {{
+                                                console.log('[EMBED] Restoring iframe to original parent');
+                                                if (window.originalIframeNextSibling) {{
+                                                    window.originalIframeParent.insertBefore(iframe, window.originalIframeNextSibling);
+                                                }} else {{
+                                                    window.originalIframeParent.appendChild(iframe);
+                                                }}
+                                                window.originalIframeParent = null;
+                                                window.originalIframeNextSibling = null;
+                                            }}
+                                            
+                                            // Восстанавливаем все стили iframe
+                                            iframe.style.cssText = '';
+                                            iframe.style.width = '100%';
+                                            iframe.style.height = '100%';
+                                            iframe.style.display = 'block';
+                                            
+                                            // Восстанавливаем стили body и html если они были изменены
+                                            document.body.style.cssText = '';
+                                            document.documentElement.style.cssText = '';
+                                            
+                                            // Восстанавливаем стили родительских элементов если они были изменены
+                                            if (window.fullscreenParentStyles) {{
+                                                let parent = iframe.parentElement;
+                                                while (parent && parent !== document.body && parent !== document.documentElement) {{
+                                                    if (window.fullscreenParentStyles.has(parent)) {{
+                                                        const styles = window.fullscreenParentStyles.get(parent);
+                                                        parent.style.position = styles.position || '';
+                                                        parent.style.width = styles.width || '';
+                                                        parent.style.height = styles.height || '';
+                                                        parent.style.maxWidth = styles.maxWidth || '';
+                                                        parent.style.maxHeight = styles.maxHeight || '';
+                                                        parent.style.overflow = styles.overflow || '';
+                                                        parent.style.margin = styles.margin || '';
+                                                        parent.style.padding = styles.padding || '';
+                                                        parent.style.zIndex = styles.zIndex || '';
+                                                    }}
+                                                    parent = parent.parentElement;
+                                                }}
+                                                window.fullscreenParentStyles.clear();
+                                            }}
+                                            
+                                            // Отправляем сообщение о выходе из fullscreen
+                                            iframe.contentWindow.postMessage({{
+                                                type: 'fullscreen-changed',
+                                                isFullscreen: false
+                                            }}, '*');
+                                        }}
+                                    }}, 500);
+                                    
+                                    // Также слушаем сообщения от нового окна для закрытия
+                                    window.addEventListener('message', function(closeEvent) {{
+                                        if (closeEvent.data && closeEvent.data.type === 'close-fullscreen-window') {{
+                                            if (newWindow && !newWindow.closed) {{
+                                                newWindow.close();
+                                            }}
+                                        }}
+                                    }});
+                                    
+                                    return; // Выходим, так как используем новое окно - НЕ применяем CSS к iframe
+                                }} else {{
+                                    console.warn('[EMBED] Failed to open new window (popup blocked?), falling back to CSS approach');
+                                    // Fallback на CSS подход, если popup заблокирован
+                                }}
+                            }}
+                        }}
+                        
+                        // Для десктопов и если popup заблокирован используем CSS подход
+                        // ВАЖНО: Для мобильных устройств этот код выполняется только если popup заблокирован
+                        console.log('[EMBED] Using CSS fullscreen approach');
+                        enterFullscreenCSS(iframe, requestedScreenWidth, requestedScreenHeight);
+                        
+                        // Также пробуем использовать стандартный Fullscreen API как дополнение
+                        // (не для iOS, так как там он может не работать)
+                        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                        if (!isIOS && iframe.requestFullscreen) {{
+                            iframe.requestFullscreen().then(() => {{
+                                console.log('[EMBED] Iframe entered fullscreen via API (in addition to CSS)');
+                            }}).catch(err => {{
+                                console.log('[EMBED] Fullscreen API not available, using CSS only:', err);
+                            }});
+                        }}
+                        
+                        // Отправляем подтверждение viewer с размерами экрана
+                        iframe.contentWindow.postMessage({{
+                            type: 'fullscreen-response',
+                            success: true,
+                            screenWidth: requestedScreenWidth,
+                            screenHeight: requestedScreenHeight
+                        }}, '*');
+                    }} else if (event.data.action === 'exit') {{
+                        // Выходим из полноэкранного режима
+                        console.log('[EMBED] Exiting fullscreen mode for iframe');
+                        
+                        // Для iOS пробуем использовать стандартный API для выхода
+                        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                        
+                        if (isIOS) {{
+                            // Пробуем использовать webkitExitFullscreen для iOS
+                            if (document.webkitExitFullscreen) {{
+                                try {{
+                                    document.webkitExitFullscreen();
+                                    console.log('[EMBED] iOS: webkitExitFullscreen called');
+                                }} catch (e) {{
+                                    console.error('[EMBED] iOS: webkitExitFullscreen failed:', e);
+                                    exitFullscreenCSS(iframe);
+                                }}
+                            }} else if (document.exitFullscreen) {{
+                                document.exitFullscreen().catch(() => {{
+                                    exitFullscreenCSS(iframe);
+                                }});
+                            }} else {{
+                                exitFullscreenCSS(iframe);
+                            }}
+                            iframe.contentWindow.postMessage({{ type: 'fullscreen-response', success: true }}, '*');
+                        }} else {{
+                            // Пробуем использовать стандартный Fullscreen API
+                            if (document.exitFullscreen) {{
+                                document.exitFullscreen().catch(() => {{
+                                    exitFullscreenCSS(iframe);
+                                }});
+                            }} else if (document.webkitExitFullscreen) {{
+                                document.webkitExitFullscreen();
+                            }} else if (document.mozCancelFullScreen) {{
+                                document.mozCancelFullScreen();
+                            }} else if (document.msExitFullscreen) {{
+                                document.msExitFullscreen();
+                            }} else {{
+                                exitFullscreenCSS(iframe);
+                            }}
+                            iframe.contentWindow.postMessage({{ type: 'fullscreen-response', success: true }}, '*');
+                        }}
+                    }}
+                }}
+            }});
+            
+            // КРИТИЧЕСКИ ВАЖНО: Для мобильных устройств перемещаем iframe в body напрямую
+            // Это обходит ограничения контейнера Tilda и позволяет iframe разворачиваться на весь экран
+            function enterFullscreenCSS(iframe, screenWidthParam, screenHeightParam) {{
+                console.log('[EMBED] Using CSS fullscreen approach');
+                console.log('[EMBED] Target screen size:', screenWidthParam, 'x', screenHeightParam);
+                console.log('[EMBED] Current iframe size:', iframe.offsetWidth, 'x', iframe.offsetHeight);
+                console.log('[EMBED] Window size:', window.innerWidth, 'x', window.innerHeight);
+                console.log('[EMBED] Document size:', document.documentElement.clientWidth, 'x', document.documentElement.clientHeight);
+                
+                // Если размеры не переданы, определяем их
+                let screenWidth = screenWidthParam;
+                let screenHeight = screenHeightParam;
+                
+                if (!screenWidth || !screenHeight) {{
+                    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                    const screenW = window.screen.width || 0;
+                    const screenH = window.screen.height || 0;
+                    
+                    if (isIOS) {{
+                        // Для iOS определяем ориентацию
+                        let isLandscape = false;
+                        if (window.orientation !== undefined) {{
+                            isLandscape = Math.abs(window.orientation) === 90;
+                        }} else {{
+                            isLandscape = screenW > screenH;
+                        }}
+                        
+                        if (isLandscape) {{
+                            screenWidth = Math.max(screenW, screenH);
+                            screenHeight = Math.min(screenW, screenH);
+                        }} else {{
+                            screenWidth = Math.min(screenW, screenH);
+                            screenHeight = Math.max(screenW, screenH);
+                        }}
+                    }} else {{
+                        screenWidth = window.innerWidth || screenW;
+                        screenHeight = window.innerHeight || screenH;
+                    }}
+                }}
+                
+                console.log('[EMBED] Final screen size:', screenWidth, 'x', screenHeight);
+                
+                // КРИТИЧЕСКИ ВАЖНО: Для мобильных устройств перемещаем iframe в body напрямую
+                // Это обходит все ограничения родительских контейнеров (Tilda и т.д.)
+                const isMobile = /iPhone|iPad|iPod|Android|Mobile|BlackBerry|Windows Phone|Opera Mini|Palm/i.test(navigator.userAgent);
+                
+                if (isMobile && iframe.parentElement !== document.body) {{
+                    console.log('[EMBED] Mobile device detected, moving iframe to body to bypass container restrictions');
+                    // Сохраняем ссылку на оригинальный родитель для восстановления
+                    if (!window.originalIframeParent) {{
+                        window.originalIframeParent = iframe.parentElement;
+                        window.originalIframeNextSibling = iframe.nextSibling;
+                    }}
+                    // Перемещаем iframe в body
+                    document.body.appendChild(iframe);
+                    console.log('[EMBED] Iframe moved to body');
+                }}
+                
+                // КРИТИЧЕСКИ ВАЖНО: сначала устанавливаем body и html на весь экран
+                // Используем реальные размеры экрана в пикселях через setProperty для гарантированного применения
+                // Это должно быть сделано ДО изменения родительских элементов iframe
+                document.body.style.setProperty('position', 'fixed', 'important');
+                document.body.style.setProperty('top', '0', 'important');
+                document.body.style.setProperty('left', '0', 'important');
+                document.body.style.setProperty('right', '0', 'important');
+                document.body.style.setProperty('bottom', '0', 'important');
+                document.body.style.setProperty('width', screenWidth + 'px', 'important');
+                document.body.style.setProperty('height', screenHeight + 'px', 'important');
+                document.body.style.setProperty('max-width', screenWidth + 'px', 'important');
+                document.body.style.setProperty('max-height', screenHeight + 'px', 'important');
+                document.body.style.setProperty('min-width', screenWidth + 'px', 'important');
+                document.body.style.setProperty('min-height', screenHeight + 'px', 'important');
+                document.body.style.setProperty('margin', '0', 'important');
+                document.body.style.setProperty('padding', '0', 'important');
+                document.body.style.setProperty('overflow', 'hidden', 'important');
+                document.body.style.setProperty('z-index', '999997', 'important');
+                
+                document.documentElement.style.setProperty('position', 'fixed', 'important');
+                document.documentElement.style.setProperty('top', '0', 'important');
+                document.documentElement.style.setProperty('left', '0', 'important');
+                document.documentElement.style.setProperty('right', '0', 'important');
+                document.documentElement.style.setProperty('bottom', '0', 'important');
+                document.documentElement.style.setProperty('width', screenWidth + 'px', 'important');
+                document.documentElement.style.setProperty('height', screenHeight + 'px', 'important');
+                document.documentElement.style.setProperty('max-width', screenWidth + 'px', 'important');
+                document.documentElement.style.setProperty('max-height', screenHeight + 'px', 'important');
+                document.documentElement.style.setProperty('min-width', screenWidth + 'px', 'important');
+                document.documentElement.style.setProperty('min-height', screenHeight + 'px', 'important');
+                document.documentElement.style.setProperty('margin', '0', 'important');
+                document.documentElement.style.setProperty('padding', '0', 'important');
+                document.documentElement.style.setProperty('overflow', 'hidden', 'important');
+                
+                // Ищем и изменяем размеры всех родительских элементов iframe
+                // ВАЖНО: также ищем элементы с ограничениями (max-width, max-height, overflow)
+                let parent = iframe.parentElement;
+                const parentsToModify = [];
+                const allElementsToModify = [];
+                
+                while (parent && parent !== document.body && parent !== document.documentElement) {{
+                    parentsToModify.push(parent);
+                    console.log('[EMBED] Found parent element:', parent.tagName, parent.className, 'size:', parent.offsetWidth, 'x', parent.offsetHeight);
+                    parent = parent.parentElement;
+                }}
+                
+                // Также ищем все элементы с ограничениями размеров, которые могут мешать fullscreen
+                // Это особенно важно для контейнеров Tilda
+                const allElements = document.querySelectorAll('*');
+                allElements.forEach(el => {{
+                    const style = window.getComputedStyle(el);
+                    const hasMaxWidth = style.maxWidth && style.maxWidth !== 'none' && style.maxWidth !== '100%';
+                    const hasMaxHeight = style.maxHeight && style.maxHeight !== 'none' && style.maxHeight !== '100%';
+                    const hasOverflow = style.overflow !== 'visible' && style.overflow !== 'unset';
+                    const hasPosition = style.position === 'relative' || style.position === 'absolute';
+                    
+                    // Если элемент имеет ограничения и находится в пути к iframe, добавляем его
+                    if ((hasMaxWidth || hasMaxHeight || hasOverflow || hasPosition) && 
+                        (iframe.contains(el) || el.contains(iframe) || parentsToModify.includes(el))) {{
+                        if (!allElementsToModify.includes(el) && !parentsToModify.includes(el)) {{
+                            allElementsToModify.push(el);
+                        }}
+                    }}
+                }});
+                
+                // Сохраняем оригинальные стили родительских элементов
+                if (!window.fullscreenParentStyles) {{
+                    window.fullscreenParentStyles = new Map();
+                }}
+                
+                // Изменяем размеры всех родительских элементов
+                parentsToModify.forEach((parentEl, index) => {{
+                    if (!window.fullscreenParentStyles.has(parentEl)) {{
+                        window.fullscreenParentStyles.set(parentEl, {{
+                            position: parentEl.style.position,
+                            width: parentEl.style.width,
+                            height: parentEl.style.height,
+                            maxWidth: parentEl.style.maxWidth,
+                            maxHeight: parentEl.style.maxHeight,
+                            overflow: parentEl.style.overflow,
+                            margin: parentEl.style.margin,
+                            padding: parentEl.style.padding,
+                            zIndex: parentEl.style.zIndex
+                        }});
+                    }}
+                    
+                    // КРИТИЧЕСКИ ВАЖНО: используем position: fixed для выхода из потока документа
+                    // Используем реальные размеры экрана в пикселях через setProperty для гарантированного применения
+                    parentEl.style.setProperty('position', 'fixed', 'important');
+                    parentEl.style.setProperty('top', '0', 'important');
+                    parentEl.style.setProperty('left', '0', 'important');
+                    parentEl.style.setProperty('right', '0', 'important');
+                    parentEl.style.setProperty('bottom', '0', 'important');
+                    parentEl.style.setProperty('width', screenWidth + 'px', 'important');
+                    parentEl.style.setProperty('height', screenHeight + 'px', 'important');
+                    parentEl.style.setProperty('max-width', screenWidth + 'px', 'important');
+                    parentEl.style.setProperty('max-height', screenHeight + 'px', 'important');
+                    parentEl.style.setProperty('min-width', screenWidth + 'px', 'important');
+                    parentEl.style.setProperty('min-height', screenHeight + 'px', 'important');
+                    parentEl.style.setProperty('overflow', 'visible', 'important');
+                    parentEl.style.setProperty('margin', '0', 'important');
+                    parentEl.style.setProperty('padding', '0', 'important');
+                    parentEl.style.setProperty('z-index', '999998', 'important');
+                }});
+                
+                // Изменяем элементы с ограничениями (контейнеры Tilda и т.д.)
+                allElementsToModify.forEach((el) => {{
+                    if (!window.fullscreenParentStyles.has(el)) {{
+                        window.fullscreenParentStyles.set(el, {{
+                            position: el.style.position,
+                            width: el.style.width,
+                            height: el.style.height,
+                            maxWidth: el.style.maxWidth,
+                            maxHeight: el.style.maxHeight,
+                            overflow: el.style.overflow,
+                            margin: el.style.margin,
+                            padding: el.style.padding
+                        }});
+                    }}
+                    
+                    // Убираем ограничения размеров
+                    el.style.setProperty('max-width', 'none', 'important');
+                    el.style.setProperty('max-height', 'none', 'important');
+                    el.style.setProperty('overflow', 'visible', 'important');
+                }});
+                
+                // Делаем iframe на весь экран используя реальные размеры экрана в пикселях
+                // Используем setProperty для гарантированного применения стилей
+                iframe.style.setProperty('position', 'fixed', 'important');
+                iframe.style.setProperty('top', '0', 'important');
+                iframe.style.setProperty('left', '0', 'important');
+                iframe.style.setProperty('right', '0', 'important');
+                iframe.style.setProperty('bottom', '0', 'important');
+                iframe.style.setProperty('width', screenWidth + 'px', 'important');
+                iframe.style.setProperty('height', screenHeight + 'px', 'important');
+                iframe.style.setProperty('max-width', screenWidth + 'px', 'important');
+                iframe.style.setProperty('max-height', screenHeight + 'px', 'important');
+                iframe.style.setProperty('min-width', screenWidth + 'px', 'important');
+                iframe.style.setProperty('min-height', screenHeight + 'px', 'important');
+                iframe.style.setProperty('z-index', '999999', 'important');
+                iframe.style.setProperty('border', 'none', 'important');
+                iframe.style.setProperty('margin', '0', 'important');
+                iframe.style.setProperty('padding', '0', 'important');
+                iframe.style.setProperty('background-color', '#000', 'important');
+                iframe.style.setProperty('display', 'block', 'important');
+                
+                // Повторно применяем стили к html после изменения всех родительских элементов
+                // Это гарантирует, что html получит правильные размеры
+                setTimeout(() => {{
+                    document.documentElement.style.setProperty('position', 'fixed', 'important');
+                    document.documentElement.style.setProperty('top', '0', 'important');
+                    document.documentElement.style.setProperty('left', '0', 'important');
+                    document.documentElement.style.setProperty('right', '0', 'important');
+                    document.documentElement.style.setProperty('bottom', '0', 'important');
+                    document.documentElement.style.setProperty('width', screenWidth + 'px', 'important');
+                    document.documentElement.style.setProperty('height', screenHeight + 'px', 'important');
+                    document.documentElement.style.setProperty('max-width', screenWidth + 'px', 'important');
+                    document.documentElement.style.setProperty('max-height', screenHeight + 'px', 'important');
+                    document.documentElement.style.setProperty('min-width', screenWidth + 'px', 'important');
+                    document.documentElement.style.setProperty('min-height', screenHeight + 'px', 'important');
+                    document.documentElement.style.setProperty('margin', '0', 'important');
+                    document.documentElement.style.setProperty('padding', '0', 'important');
+                    document.documentElement.style.setProperty('overflow', 'hidden', 'important');
+                    
+                    console.log('[EMBED] Re-applied html styles, html size:', document.documentElement.offsetWidth, 'x', document.documentElement.offsetHeight);
+                }}, 50);
+                
+                // Отправляем размеры экрана в viewer через postMessage
+                // Это позволит viewer правильно масштабировать изображение
+                setTimeout(() => {{
+                    if (iframe.contentWindow) {{
+                        iframe.contentWindow.postMessage({{
+                            type: 'fullscreen-screen-size',
+                            width: screenWidth,
+                            height: screenHeight
+                        }}, '*');
+                    }}
+                }}, 100);
+                
+                // Body и html уже изменены выше, но убеждаемся что они остаются фиксированными
+                // (это дублирование для надежности, но не критично)
+                
+                // Скрываем loading
+                const loading = document.getElementById('loading');
+                if (loading) {{
+                    loading.style.display = 'none';
+                }}
+                
+                // Проверяем результат через небольшую задержку
+                setTimeout(() => {{
+                    console.log('[EMBED] After fullscreen CSS, iframe size:', iframe.offsetWidth, 'x', iframe.offsetHeight);
+                    console.log('[EMBED] After fullscreen CSS, iframe computed style:', window.getComputedStyle(iframe).width, 'x', window.getComputedStyle(iframe).height);
+                    console.log('[EMBED] After fullscreen CSS, body size:', document.body.offsetWidth, 'x', document.body.offsetHeight);
+                    console.log('[EMBED] After fullscreen CSS, html size:', document.documentElement.clientWidth, 'x', document.documentElement.clientHeight);
+                }}, 200);
+            }}
+            
+            function exitFullscreenCSS(iframe) {{
+                console.log('[EMBED] Exiting CSS fullscreen');
+                
+                // КРИТИЧЕСКИ ВАЖНО: Если iframe был перемещен в body (для мобильных), возвращаем его обратно
+                if (window.originalIframeParent && iframe.parentElement === document.body) {{
+                    console.log('[EMBED] Restoring iframe to original parent');
+                    if (window.originalIframeNextSibling) {{
+                        window.originalIframeParent.insertBefore(iframe, window.originalIframeNextSibling);
+                    }} else {{
+                        window.originalIframeParent.appendChild(iframe);
+                    }}
+                    window.originalIframeParent = null;
+                    window.originalIframeNextSibling = null;
+                }}
+                
+                // Восстанавливаем стили родительских элементов
+                if (window.fullscreenParentStyles) {{
+                    let parent = iframe.parentElement;
+                    while (parent && parent !== document.body && parent !== document.documentElement) {{
+                        if (window.fullscreenParentStyles.has(parent)) {{
+                            const styles = window.fullscreenParentStyles.get(parent);
+                            parent.style.position = styles.position || '';
+                            parent.style.width = styles.width || '';
+                            parent.style.height = styles.height || '';
+                            parent.style.maxWidth = styles.maxWidth || '';
+                            parent.style.maxHeight = styles.maxHeight || '';
+                            parent.style.overflow = styles.overflow || '';
+                            parent.style.margin = styles.margin || '';
+                            parent.style.padding = styles.padding || '';
+                            parent.style.zIndex = styles.zIndex || '';
+                        }}
+                        parent = parent.parentElement;
+                    }}
+                    window.fullscreenParentStyles.clear();
+                }}
+                
+                // Очищаем все стили iframe
+                iframe.style.cssText = '';
+                iframe.style.width = '100%';
+                iframe.style.height = '100%';
+                
+                // Восстанавливаем body и html
+                document.body.style.cssText = '';
+                document.documentElement.style.cssText = '';
+            }}
+            
+            // Обработка событий полноэкранного режима
+            document.addEventListener('fullscreenchange', function() {{
+                const iframe = document.getElementById('viewerFrame');
+                if (!iframe) return;
+                
+                if (!document.fullscreenElement) {{
+                    // Выходим из полноэкранного режима
+                    exitFullscreenCSS(iframe);
+                    // Отправляем сообщение viewer о выходе
+                    iframe.contentWindow.postMessage({{ type: 'fullscreen-changed', isFullscreen: false }}, '*');
+                }}
+            }});
+            
+            document.addEventListener('webkitfullscreenchange', function() {{
+                const iframe = document.getElementById('viewerFrame');
+                if (!iframe) return;
+                if (!document.webkitFullscreenElement) {{
+                    exitFullscreenCSS(iframe);
+                    iframe.contentWindow.postMessage({{ type: 'fullscreen-changed', isFullscreen: false }}, '*');
+                }}
+            }});
         </script>
         <script>
             const iframe = document.getElementById('viewerFrame');

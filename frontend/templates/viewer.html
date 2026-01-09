@@ -59,6 +59,99 @@
             flex-shrink: 0;
         }
         
+        /* Стили для полноэкранного режима */
+        .viewer-container:fullscreen,
+        .viewer-container:-webkit-full-screen,
+        .viewer-container:-moz-full-screen,
+        .viewer-container:-ms-fullscreen {
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+        
+        .viewer-container:fullscreen .toolbar,
+        .viewer-container:-webkit-full-screen .toolbar,
+        .viewer-container:-moz-full-screen .toolbar,
+        .viewer-container:-ms-fullscreen .toolbar {
+            background: rgba(0, 0, 0, 0.8);
+        }
+        
+        /* CSS полноэкранный режим для iOS и браузеров без поддержки Fullscreen API */
+        .ios-fullscreen,
+        .css-fullscreen {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            z-index: 9999 !important;
+            background: #000 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        body.ios-fullscreen,
+        body.css-fullscreen {
+            overflow: hidden !important;
+            position: fixed !important;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        html.ios-fullscreen,
+        html.css-fullscreen {
+            overflow: hidden !important;
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        .ios-fullscreen .toolbar,
+        .css-fullscreen .toolbar {
+            background: rgba(0, 0, 0, 0.8) !important;
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+            z-index: 10000 !important;
+            margin: 0 !important;
+            padding: 10px 20px !important;
+        }
+        
+        .ios-fullscreen .viewer-content,
+        .css-fullscreen .viewer-content {
+            position: absolute !important;
+            top: 60px !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            width: 100% !important;
+            height: calc(100% - 60px) !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+        }
+        
+        .ios-fullscreen .page-container,
+        .css-fullscreen .page-container {
+            width: 100% !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        #fullscreenBtn.active {
+            background: rgba(74, 74, 74, 0.9) !important;
+        }
+        
         .toolbar-left {
             display: flex;
             align-items: center;
@@ -246,6 +339,7 @@
                 <button class="btn" onclick="zoomOut()">-</button>
                 <span id="zoomLevel">100%</span>
                 <button class="btn" onclick="zoomIn()">+</button>
+                <button class="btn" id="fullscreenBtn" onclick="toggleFullscreen()" title="Полноэкранный режим">⛶</button>
             </div>
         </div>
         
@@ -433,6 +527,37 @@
             console.log('[VIEWER] Viewer detected in iframe, applying transparent background');
             console.log('[VIEWER] Current origin:', window.location.origin);
             console.log('[VIEWER] API Base will be relative:', CONFIG.apiBase);
+        } else {
+            // Если viewer открыт в новом окне (не в iframe), применяем черный фон
+            document.body.style.background = '#000';
+            document.documentElement.style.background = '#000';
+            console.log('[VIEWER] Viewer opened in new window, applying black background');
+            
+            // Добавляем кнопку закрытия в toolbar
+            setTimeout(() => {
+                const toolbar = document.querySelector('.toolbar');
+                if (toolbar && !document.getElementById('closeWindowBtn')) {
+                    const closeBtn = document.createElement('button');
+                    closeBtn.id = 'closeWindowBtn';
+                    closeBtn.className = 'btn';
+                    closeBtn.textContent = '✕';
+                    closeBtn.title = 'Закрыть';
+                    closeBtn.style.marginLeft = '10px';
+                    closeBtn.onclick = function() {
+                        if (window.opener) {
+                            window.close();
+                        } else {
+                            // Если window.close() не работает, отправляем сообщение родителю
+                            window.parent.postMessage({ type: 'close-fullscreen-window' }, '*');
+                        }
+                    };
+                    
+                    const toolbarRight = toolbar.querySelector('.toolbar-right');
+                    if (toolbarRight) {
+                        toolbarRight.appendChild(closeBtn);
+                    }
+                }
+            }, 100);
         }
         
         // 1. Блокировка горячих клавиш для DevTools и других инструментов
@@ -527,6 +652,10 @@
         
         // ========== ЗАЩИТА ОТ СКРИНШОТОВ И ЗАПИСИ ЭКРАНА ==========
         
+        // Определяем тип мобильного устройства (isMobileDevice уже объявлена выше)
+        const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isAndroid = /Android/i.test(navigator.userAgent);
+        
         // 1. Защита от Screen Capture API (запись экрана)
         if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
             const originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
@@ -534,6 +663,136 @@
                 showOverlay('Запись экрана заблокирована');
                 return Promise.reject(new DOMException('Запись экрана запрещена', 'NotAllowedError'));
             };
+        }
+        
+        // 1.1. Защита от Screen Capture API для мобильных устройств
+        if (isMobileDevice) {
+            // Блокируем все методы захвата экрана
+            if (navigator.mediaDevices) {
+                const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
+                if (originalGetUserMedia) {
+                    navigator.mediaDevices.getUserMedia = function(constraints) {
+                        // Разрешаем только аудио, блокируем видео
+                        if (constraints && constraints.video) {
+                            showOverlay('Захват экрана заблокирован');
+                            return Promise.reject(new DOMException('Захват экрана запрещен', 'NotAllowedError'));
+                        }
+                        return originalGetUserMedia.call(this, constraints);
+                    };
+                }
+            }
+            
+            // Защита от screenshot через Page Visibility API (для iOS/Android)
+            let lastVisibilityChange = Date.now();
+            document.addEventListener('visibilitychange', () => {
+                const now = Date.now();
+                // Если страница быстро скрывается и показывается, возможно делают скриншот
+                if (document.hidden) {
+                    lastVisibilityChange = now;
+                    // Применяем blur немедленно для мобильных устройств
+                    if (!isBlurred) {
+                        isBlurred = true;
+                        document.body.style.filter = 'blur(20px) brightness(0.3)';
+                        document.body.style.pointerEvents = 'none';
+                        const viewerContent = document.querySelector('.viewer-content');
+                        if (viewerContent) {
+                            viewerContent.style.filter = 'blur(20px) brightness(0.3)';
+                        }
+                    }
+                } else {
+                    // Проверяем, не слишком ли быстро вернулись (возможен скриншот)
+                    const timeDiff = now - lastVisibilityChange;
+                    if (timeDiff < 500) { // Меньше 500мс - подозрительно
+                        showOverlay('Обнаружена попытка сделать скриншот');
+                        setTimeout(() => {
+                            if (isBlurred) {
+                                isBlurred = false;
+                                document.body.style.filter = 'none';
+                                document.body.style.pointerEvents = 'auto';
+                                const viewerContent = document.querySelector('.viewer-content');
+                                if (viewerContent) {
+                                    viewerContent.style.filter = 'none';
+                                }
+                            }
+                        }, 1000);
+                    } else {
+                        if (isBlurred) {
+                            isBlurred = false;
+                            document.body.style.filter = 'none';
+                            document.body.style.pointerEvents = 'auto';
+                            const viewerContent = document.querySelector('.viewer-content');
+                            if (viewerContent) {
+                                viewerContent.style.filter = 'none';
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Защита от переключения приложений (pagehide/pageshow для мобильных)
+            window.addEventListener('pagehide', () => {
+                // Применяем blur при скрытии страницы
+                if (!isBlurred) {
+                    isBlurred = true;
+                    document.body.style.filter = 'blur(20px) brightness(0.3)';
+                    document.body.style.pointerEvents = 'none';
+                    const viewerContent = document.querySelector('.viewer-content');
+                    if (viewerContent) {
+                        viewerContent.style.filter = 'blur(20px) brightness(0.3)';
+                    }
+                }
+            });
+            
+            window.addEventListener('pageshow', (e) => {
+                // Если страница была восстановлена из кеша, проверяем на скриншот
+                if (e.persisted) {
+                    showOverlay('Обнаружена подозрительная активность');
+                    setTimeout(() => {
+                        if (isBlurred) {
+                            isBlurred = false;
+                            document.body.style.filter = 'none';
+                            document.body.style.pointerEvents = 'auto';
+                            const viewerContent = document.querySelector('.viewer-content');
+                            if (viewerContent) {
+                                viewerContent.style.filter = 'none';
+                            }
+                        }
+                    }, 2000);
+                }
+            });
+            
+            // Для iOS: защита от screenshot через изменение размера окна
+            if (isIOS) {
+                let lastResizeTime = Date.now();
+                window.addEventListener('resize', () => {
+                    const now = Date.now();
+                    const timeDiff = now - lastResizeTime;
+                    // Если быстрое изменение размера, возможно screenshot
+                    if (timeDiff < 100) {
+                        if (!isBlurred) {
+                            isBlurred = true;
+                            document.body.style.filter = 'blur(20px) brightness(0.3)';
+                            document.body.style.pointerEvents = 'none';
+                            const viewerContent = document.querySelector('.viewer-content');
+                            if (viewerContent) {
+                                viewerContent.style.filter = 'blur(20px) brightness(0.3)';
+                            }
+                            setTimeout(() => {
+                                if (isBlurred) {
+                                    isBlurred = false;
+                                    document.body.style.filter = 'none';
+                                    document.body.style.pointerEvents = 'auto';
+                                    const viewerContent = document.querySelector('.viewer-content');
+                                    if (viewerContent) {
+                                        viewerContent.style.filter = 'none';
+                                    }
+                                }
+                            }, 500);
+                        }
+                    }
+                    lastResizeTime = now;
+                });
+            }
         }
         
         // 2. Защита от Print Screen и других способов скриншотов
@@ -838,6 +1097,9 @@
                 CONFIG.currentPage = pageNumber;
                 updatePageInfo();
                 
+                // Упрощаем toolbar если в портретной ориентации
+                simplifyToolbarForPortrait();
+                
                 // Предзагрузка следующей страницы
                 if (pageNumber < CONFIG.totalPages) {
                     preloadPage(pageNumber + 1);
@@ -931,10 +1193,1001 @@
             document.getElementById('zoomLevel').textContent = Math.round(CONFIG.zoomLevel * 100) + '%';
         }
         
-        function updatePageInfo() {
-            document.getElementById('pageInfo').textContent = 
-                `Страница ${CONFIG.currentPage} из ${CONFIG.totalPages}`;
+        // Функция для упрощения toolbar в портретной ориентации
+        function simplifyToolbarForPortrait() {
+            const toolbar = document.querySelector('.toolbar');
+            if (!toolbar) return;
+            
+            const isPortrait = window.innerHeight > window.innerWidth;
+            if (!isPortrait) {
+                restoreToolbar();
+                return;
+            }
+            
+            // Убираем текст с кнопок навигации, оставляем только стрелки
+            const prevBtn = toolbar.querySelector('button[onclick="previousPage()"]');
+            const nextBtn = toolbar.querySelector('button[onclick="nextPage()"]');
+            if (prevBtn) {
+                if (!prevBtn.getAttribute('data-original-text')) {
+                    prevBtn.setAttribute('data-original-text', prevBtn.textContent);
+                }
+                prevBtn.textContent = '←';
+            }
+            if (nextBtn) {
+                if (!nextBtn.getAttribute('data-original-text')) {
+                    nextBtn.setAttribute('data-original-text', nextBtn.textContent);
+                }
+                nextBtn.textContent = '→';
+            }
+            
+            // Упрощаем формат page-info: убираем слово "Страница"
+            const pageInfo = toolbar.querySelector('.page-info');
+            if (pageInfo) {
+                if (!pageInfo.getAttribute('data-original-text')) {
+                    pageInfo.setAttribute('data-original-text', pageInfo.textContent);
+                }
+                const text = pageInfo.textContent;
+                const match = text.match(/(\d+)\s*из\s*(\d+)/);
+                if (match) {
+                    pageInfo.textContent = `${match[1]} из ${match[2]}`;
+                } else {
+                    // Если формат не найден, обновляем через updatePageInfo
+                    updatePageInfo();
+                }
+            }
         }
+        
+        // Функция для восстановления toolbar
+        function restoreToolbar() {
+            const toolbar = document.querySelector('.toolbar');
+            if (!toolbar) return;
+            
+            const prevBtn = toolbar.querySelector('button[onclick="previousPage()"]');
+            const nextBtn = toolbar.querySelector('button[onclick="nextPage()"]');
+            if (prevBtn) {
+                const originalText = prevBtn.getAttribute('data-original-text');
+                if (originalText) {
+                    prevBtn.textContent = originalText;
+                    prevBtn.removeAttribute('data-original-text');
+                }
+            }
+            if (nextBtn) {
+                const originalText = nextBtn.getAttribute('data-original-text');
+                if (originalText) {
+                    nextBtn.textContent = originalText;
+                    nextBtn.removeAttribute('data-original-text');
+                }
+            }
+            
+            const pageInfo = toolbar.querySelector('.page-info');
+            if (pageInfo) {
+                const originalText = pageInfo.getAttribute('data-original-text');
+                if (originalText) {
+                    pageInfo.textContent = originalText;
+                    pageInfo.removeAttribute('data-original-text');
+                }
+            }
+        }
+        
+        function updatePageInfo() {
+            const pageInfo = document.getElementById('pageInfo');
+            if (!pageInfo) return;
+            
+            // Проверяем портретную ориентацию (не только в fullscreen)
+            const isPortrait = window.innerHeight > window.innerWidth;
+            
+            if (isPortrait) {
+                // В портретной ориентации убираем слово "Страница", оставляем только "1 из 10"
+                pageInfo.textContent = `${CONFIG.currentPage} из ${CONFIG.totalPages}`;
+                // Сохраняем оригинальный формат для восстановления
+                if (!pageInfo.getAttribute('data-original-text')) {
+                    pageInfo.setAttribute('data-original-text', `Страница ${CONFIG.currentPage} из ${CONFIG.totalPages}`);
+                }
+            } else {
+                // В ландшафтной ориентации используем полный формат
+                pageInfo.textContent = `Страница ${CONFIG.currentPage} из ${CONFIG.totalPages}`;
+            }
+        }
+        
+        // ========== ПОЛНОЭКРАННЫЙ РЕЖИМ ==========
+        let isFullscreenMode = false; // Флаг для iOS полноэкранного режима
+        
+        // Функция для применения локального полноэкранного режима
+        function applyLocalFullscreen(container, screenWidth, screenHeight) {
+            isFullscreenMode = true;
+            container.classList.add('ios-fullscreen');
+            document.body.classList.add('ios-fullscreen');
+            document.documentElement.classList.add('ios-fullscreen');
+            
+            // Если размеры не переданы, пытаемся определить их
+            if (!screenWidth || !screenHeight) {
+                if (isIOS) {
+                    // Для iOS получаем размеры с учетом ориентации
+                    const screenW = window.screen.width || 0;
+                    const screenH = window.screen.height || 0;
+                    const currentWidth = window.innerWidth || screenW;
+                    const currentHeight = window.innerHeight || screenH;
+                    const isLandscape = currentWidth > currentHeight;
+                    
+                    if (isLandscape) {
+                        screenWidth = Math.max(screenW, screenH);
+                        screenHeight = Math.min(screenW, screenH);
+                    } else {
+                        screenWidth = Math.min(screenW, screenH);
+                        screenHeight = Math.max(screenW, screenH);
+                    }
+                    
+                    // Используем outerWidth/outerHeight если доступны
+                    if (window.outerWidth && window.outerHeight) {
+                        screenWidth = Math.max(screenWidth, window.outerWidth);
+                        screenHeight = Math.max(screenHeight, window.outerHeight);
+                    }
+                } else {
+                    screenWidth = window.innerWidth || screen.width;
+                    screenHeight = window.innerHeight || screen.height;
+                }
+            }
+            
+            console.log('[FULLSCREEN] Applying local fullscreen with size:', screenWidth, 'x', screenHeight);
+            
+            // КРИТИЧЕСКИ ВАЖНО: используем переданные размеры экрана, а не размеры iframe!
+            // window.innerWidth/innerHeight внутри iframe дают размеры iframe (600x600), а не экрана
+            container.style.width = screenWidth + 'px';
+            container.style.height = screenHeight + 'px';
+            container.style.position = 'fixed';
+            container.style.top = '0';
+            container.style.left = '0';
+            container.style.right = '0';
+            container.style.bottom = '0';
+            container.style.margin = '0';
+            container.style.padding = '0';
+            container.style.zIndex = '999999';
+            container.style.maxWidth = screenWidth + 'px';
+            container.style.maxHeight = screenHeight + 'px';
+            container.style.minWidth = screenWidth + 'px';
+            container.style.minHeight = screenHeight + 'px';
+            
+            // Также применяем стили к html и body для полноэкранного режима
+            document.documentElement.style.width = screenWidth + 'px';
+            document.documentElement.style.height = screenHeight + 'px';
+            document.documentElement.style.overflow = 'hidden';
+            document.documentElement.style.margin = '0';
+            document.documentElement.style.padding = '0';
+            document.documentElement.style.position = 'fixed';
+            document.documentElement.style.top = '0';
+            document.documentElement.style.left = '0';
+            
+            document.body.style.width = screenWidth + 'px';
+            document.body.style.height = screenHeight + 'px';
+            document.body.style.overflow = 'hidden';
+            document.body.style.position = 'fixed';
+            document.body.style.top = '0';
+            document.body.style.left = '0';
+            document.body.style.margin = '0';
+            document.body.style.padding = '0';
+            
+            // КРИТИЧЕСКИ ВАЖНО: Настраиваем toolbar для правильного отображения в портретной ориентации
+            const toolbar = document.querySelector('.toolbar');
+            if (toolbar) {
+                // Убеждаемся, что toolbar виден и правильно позиционирован
+                toolbar.style.position = 'fixed';
+                toolbar.style.top = '0';
+                toolbar.style.left = '0';
+                toolbar.style.right = '0';
+                toolbar.style.width = screenWidth + 'px';
+                toolbar.style.maxWidth = screenWidth + 'px';
+                toolbar.style.minWidth = screenWidth + 'px';
+                toolbar.style.zIndex = '10000';
+                toolbar.style.background = 'rgba(0, 0, 0, 0.8)';
+                toolbar.style.margin = '0';
+                toolbar.style.padding = '10px 20px';
+                toolbar.style.display = 'flex';
+                toolbar.style.justifyContent = 'space-between';
+                toolbar.style.alignItems = 'center';
+                toolbar.style.flexShrink = '0';
+                
+                // Для портретной ориентации уменьшаем padding и размеры, чтобы кнопки поместились
+                const isPortrait = screenHeight > screenWidth;
+                if (isPortrait) {
+                    toolbar.style.padding = '4px 6px';
+                    toolbar.style.fontSize = '10px';
+                    toolbar.style.minHeight = 'auto';
+                    toolbar.style.maxHeight = '50px';
+                    
+                    // Уменьшаем gap между элементами
+                    const toolbarLeft = toolbar.querySelector('.toolbar-left');
+                    const toolbarRight = toolbar.querySelector('.toolbar-right');
+                    if (toolbarLeft) {
+                        toolbarLeft.style.gap = '4px';
+                        toolbarLeft.style.flexWrap = 'nowrap';
+                    }
+                    if (toolbarRight) {
+                        toolbarRight.style.gap = '4px';
+                        toolbarRight.style.flexWrap = 'nowrap';
+                    }
+                    
+                    // Уменьшаем размер кнопок для портретной ориентации
+                    const buttons = toolbar.querySelectorAll('.btn');
+                    buttons.forEach(btn => {
+                        btn.style.padding = '3px 6px';
+                        btn.style.fontSize = '10px';
+                        btn.style.minWidth = 'auto';
+                        btn.style.whiteSpace = 'nowrap';
+                        btn.style.lineHeight = '1.2';
+                    });
+                    
+                    // Вызываем функцию упрощения toolbar для портретной ориентации
+                    simplifyToolbarForPortrait();
+                    
+                    // Уменьшаем размер текста в zoomLevel
+                    const zoomLevel = toolbar.querySelector('#zoomLevel');
+                    if (zoomLevel) {
+                        zoomLevel.style.fontSize = '10px';
+                        zoomLevel.style.padding = '0 2px';
+                        zoomLevel.style.lineHeight = '1.2';
+                    }
+                } else {
+                    // Для ландшафтной ориентации используем стандартные размеры
+                    toolbar.style.padding = '10px 20px';
+                    toolbar.style.fontSize = '';
+                }
+                
+                // Получаем реальную высоту toolbar после применения стилей
+                const toolbarHeight = toolbar.offsetHeight || 60;
+                console.log('[FULLSCREEN] Toolbar height:', toolbarHeight, 'screenHeight:', screenHeight, 'isPortrait:', isPortrait);
+                
+                // Сохраняем toolbarHeight для использования ниже
+                window.currentToolbarHeight = toolbarHeight;
+            } else {
+                window.currentToolbarHeight = 60;
+            }
+            
+            // Настраиваем viewer-content
+            const viewerContent = document.querySelector('.viewer-content');
+            if (viewerContent) {
+                const toolbarHeight = toolbar ? toolbar.offsetHeight : 60;
+                // Используем реальные размеры экрана минус высота toolbar
+                viewerContent.style.width = screenWidth + 'px';
+                viewerContent.style.height = (screenHeight - toolbarHeight) + 'px';
+                viewerContent.style.position = 'absolute';
+                viewerContent.style.top = toolbarHeight + 'px';
+                viewerContent.style.left = '0';
+                viewerContent.style.margin = '0';
+                viewerContent.style.padding = '0';
+                viewerContent.style.maxWidth = screenWidth + 'px';
+                viewerContent.style.maxHeight = (screenHeight - toolbarHeight) + 'px';
+                viewerContent.style.minWidth = screenWidth + 'px';
+                viewerContent.style.minHeight = (screenHeight - toolbarHeight) + 'px';
+                viewerContent.style.overflow = 'hidden';
+            }
+            
+            // Также настраиваем pageContainer для правильного масштабирования изображения
+            const pageContainer = document.getElementById('pageContainer');
+            if (pageContainer) {
+                const toolbarHeight = window.currentToolbarHeight || (toolbar ? toolbar.offsetHeight : 60);
+                pageContainer.style.width = screenWidth + 'px';
+                pageContainer.style.height = (screenHeight - toolbarHeight) + 'px';
+                pageContainer.style.maxWidth = screenWidth + 'px';
+                pageContainer.style.maxHeight = (screenHeight - toolbarHeight) + 'px';
+                pageContainer.style.minWidth = screenWidth + 'px';
+                pageContainer.style.minHeight = (screenHeight - toolbarHeight) + 'px';
+            }
+            
+            // Пересчитываем zoom
+            setTimeout(() => {
+                applyZoom();
+                if (watermarkCanvas) {
+                    updateCanvasSize();
+                }
+            }, 100);
+            
+            updateFullscreenButton();
+            console.log('[FULLSCREEN] Local fullscreen applied:', screenWidth, 'x', screenHeight);
+        }
+        
+        function exitLocalFullscreen(container) {
+            isFullscreenMode = false;
+            container.classList.remove('ios-fullscreen');
+            document.body.classList.remove('ios-fullscreen');
+            document.documentElement.classList.remove('ios-fullscreen');
+            
+            // Восстанавливаем размеры контейнера
+            container.style.width = '';
+            container.style.height = '';
+            container.style.position = '';
+            container.style.top = '';
+            container.style.left = '';
+            container.style.right = '';
+            container.style.bottom = '';
+            container.style.zIndex = '';
+            container.style.maxWidth = '';
+            container.style.maxHeight = '';
+            container.style.minWidth = '';
+            container.style.minHeight = '';
+            container.style.margin = '';
+            container.style.padding = '';
+            
+            // Восстанавливаем viewer-content
+            const viewerContent = document.querySelector('.viewer-content');
+            if (viewerContent) {
+                viewerContent.style.width = '';
+                viewerContent.style.height = '';
+                viewerContent.style.position = '';
+                viewerContent.style.top = '';
+                viewerContent.style.left = '';
+                viewerContent.style.margin = '';
+                viewerContent.style.padding = '';
+                viewerContent.style.maxWidth = '';
+                viewerContent.style.maxHeight = '';
+                viewerContent.style.minWidth = '';
+                viewerContent.style.minHeight = '';
+                viewerContent.style.overflow = '';
+            }
+            
+            // Восстанавливаем pageContainer
+            const pageContainer = document.getElementById('pageContainer');
+            if (pageContainer) {
+                pageContainer.style.width = '';
+                pageContainer.style.height = '';
+                pageContainer.style.maxWidth = '';
+                pageContainer.style.maxHeight = '';
+                pageContainer.style.minWidth = '';
+                pageContainer.style.minHeight = '';
+            }
+            
+            // Восстанавливаем toolbar стили
+            const toolbar = document.querySelector('.toolbar');
+            if (toolbar) {
+                toolbar.style.width = '';
+                toolbar.style.maxWidth = '';
+                toolbar.style.minWidth = '';
+                toolbar.style.padding = '';
+                toolbar.style.fontSize = '';
+                toolbar.style.minHeight = '';
+                toolbar.style.maxHeight = '';
+                const toolbarLeft = toolbar.querySelector('.toolbar-left');
+                const toolbarRight = toolbar.querySelector('.toolbar-right');
+                if (toolbarLeft) {
+                    toolbarLeft.style.gap = '';
+                    toolbarLeft.style.flexWrap = '';
+                }
+                if (toolbarRight) {
+                    toolbarRight.style.gap = '';
+                    toolbarRight.style.flexWrap = '';
+                }
+                const buttons = toolbar.querySelectorAll('.btn');
+                buttons.forEach(btn => {
+                    btn.style.padding = '';
+                    btn.style.fontSize = '';
+                    btn.style.minWidth = '';
+                    btn.style.whiteSpace = '';
+                    btn.style.lineHeight = '';
+                    // Восстанавливаем оригинальный текст кнопок
+                    const originalText = btn.getAttribute('data-original-text');
+                    if (originalText) {
+                        btn.textContent = originalText;
+                        btn.removeAttribute('data-original-text');
+                    }
+                });
+                const pageInfo = toolbar.querySelector('.page-info');
+                const zoomLevel = toolbar.querySelector('#zoomLevel');
+                if (pageInfo) {
+                    pageInfo.style.fontSize = '';
+                    pageInfo.style.padding = '';
+                    pageInfo.style.lineHeight = '';
+                    // Восстанавливаем оригинальный текст
+                    const originalText = pageInfo.getAttribute('data-original-text');
+                    if (originalText) {
+                        pageInfo.textContent = originalText;
+                        pageInfo.removeAttribute('data-original-text');
+                    }
+                }
+                if (zoomLevel) {
+                    zoomLevel.style.fontSize = '';
+                    zoomLevel.style.padding = '';
+                    zoomLevel.style.lineHeight = '';
+                }
+            }
+            
+            // Разблокируем прокрутку
+            document.body.style.overflow = '';
+            document.documentElement.style.overflow = '';
+            document.body.style.position = '';
+            document.body.style.width = '';
+            document.body.style.height = '';
+            document.body.style.margin = '';
+            document.body.style.padding = '';
+            document.body.style.background = '';
+            document.documentElement.style.width = '';
+            document.documentElement.style.height = '';
+            document.documentElement.style.margin = '';
+            document.documentElement.style.padding = '';
+            document.documentElement.style.position = '';
+            document.documentElement.style.top = '';
+            document.documentElement.style.left = '';
+            
+            // Убираем CSS трансформацию если была применена
+            container.style.transform = '';
+            container.style.transformOrigin = '';
+            
+            // Разблокируем ориентацию экрана если была заблокирована
+            if (window.screen && window.screen.orientation && window.screen.orientation.unlock) {
+                try {
+                    window.screen.orientation.unlock();
+                } catch (e) {
+                    console.log('[FULLSCREEN] Could not unlock orientation:', e);
+                }
+            }
+            
+            // Пересчитываем zoom для обычного режима
+            setTimeout(() => {
+                applyZoom();
+                if (watermarkCanvas) {
+                    updateCanvasSize();
+                }
+            }, 100);
+            
+            updateFullscreenButton();
+            console.log('[FULLSCREEN] Local fullscreen exited');
+        }
+        
+        function toggleFullscreen() {
+            const container = document.querySelector('.viewer-container');
+            if (!container) return;
+            
+            // Проверяем, находимся ли мы в iframe
+            const isInIframe = window.self !== window.top;
+            
+            // Специальная обработка для iOS
+            if (isIOS) {
+                // Если мы в iframe, пытаемся запросить полноэкранный режим у родительского окна
+                if (isInIframe) {
+                    try {
+                        console.log('[FULLSCREEN] iOS in iframe, sending message to parent, current mode:', isFullscreenMode);
+                        
+                        if (!isFullscreenMode) {
+                            // Входим в полноэкранный режим
+                            // Получаем размеры экрана для передачи родителю и локального применения
+                            // ВАЖНО: внутри iframe window.screen может давать неправильные размеры
+                            // Используем ту же логику, что и в embed странице
+                            const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+                            let screenWidth, screenHeight;
+                            
+                            if (isIOS) {
+                                const screenW = window.screen.width || 0;
+                                const screenH = window.screen.height || 0;
+                                
+                                // Определяем ориентацию по window.orientation или по соотношению размеров
+                                let isLandscape = false;
+                                if (window.orientation !== undefined) {
+                                    // window.orientation: 90 или -90 = ландшафт, 0 или 180 = портрет
+                                    isLandscape = Math.abs(window.orientation) === 90;
+                                } else {
+                                    // Fallback: определяем по соотношению размеров экрана
+                                    isLandscape = screenW > screenH;
+                                }
+                                
+                                if (isLandscape) {
+                                    // Ландшафтная ориентация: ширина больше высоты
+                                    screenWidth = Math.max(screenW, screenH);
+                                    screenHeight = Math.min(screenW, screenH);
+                                } else {
+                                    // Портретная ориентация: высота больше ширины
+                                    screenWidth = Math.min(screenW, screenH);
+                                    screenHeight = Math.max(screenW, screenH);
+                                }
+                                
+                                // Дополнительная проверка: если window.outerWidth/outerHeight доступны и больше, используем их
+                                if (window.outerWidth && window.outerHeight) {
+                                    const outerW = window.outerWidth;
+                                    const outerH = window.outerHeight;
+                                    const outerIsLandscape = outerW > outerH;
+                                    
+                                    if (outerIsLandscape) {
+                                        screenWidth = Math.max(screenWidth, Math.max(outerW, outerH));
+                                        screenHeight = Math.max(screenHeight, Math.min(outerW, outerH));
+                                    } else {
+                                        screenWidth = Math.max(screenWidth, Math.min(outerW, outerH));
+                                        screenHeight = Math.max(screenHeight, Math.max(outerW, outerH));
+                                    }
+                                }
+                                
+                                console.log('[FULLSCREEN] iOS screen dimensions:', screenW, 'x', screenH, 'orientation:', isLandscape ? 'landscape' : 'portrait', 'final:', screenWidth, 'x', screenHeight);
+                            } else {
+                                screenWidth = window.innerWidth || window.screen.width;
+                                screenHeight = window.innerHeight || window.screen.height;
+                            }
+                            
+                            // Отправляем сообщение родительскому окну с размерами
+                            window.parent.postMessage({
+                                type: 'request-fullscreen',
+                                action: 'enter',
+                                origin: window.location.origin,
+                                screenWidth: screenWidth,
+                                screenHeight: screenHeight
+                            }, '*');
+                            
+                            // Пытаемся заблокировать ориентацию в ландшафтный режим
+                            const lockOrientation = () => {
+                                if (window.screen && window.screen.orientation && window.screen.orientation.lock) {
+                                    // Пытаемся заблокировать в ландшафтный режим
+                                    window.screen.orientation.lock('landscape').then(() => {
+                                        console.log('[FULLSCREEN] Orientation locked to landscape');
+                                    }).catch((err) => {
+                                        console.log('[FULLSCREEN] Could not lock orientation:', err);
+                                        // Если не удалось заблокировать, пытаемся повернуть контент через CSS
+                                        if (screenHeight > screenWidth) {
+                                            // Если портретная ориентация, поворачиваем контент на 90 градусов
+                                            container.style.transform = 'rotate(90deg)';
+                                            container.style.transformOrigin = 'center center';
+                                            // Меняем местами ширину и высоту для повернутого контента
+                                            const tempWidth = screenWidth;
+                                            screenWidth = screenHeight;
+                                            screenHeight = tempWidth;
+                                        }
+                                    });
+                                } else if (screen.orientation && screen.orientation.lock) {
+                                    // Старый API
+                                    screen.orientation.lock('landscape').then(() => {
+                                        console.log('[FULLSCREEN] Orientation locked to landscape (old API)');
+                                    }).catch((err) => {
+                                        console.log('[FULLSCREEN] Could not lock orientation (old API):', err);
+                                    });
+                                } else {
+                                    // Если API недоступен, пытаемся повернуть контент через CSS
+                                    if (screenHeight > screenWidth) {
+                                        console.log('[FULLSCREEN] Orientation API not available, rotating content via CSS');
+                                        container.style.transform = 'rotate(90deg)';
+                                        container.style.transformOrigin = 'center center';
+                                        // Меняем местами ширину и высоту для повернутого контента
+                                        const tempWidth = screenWidth;
+                                        screenWidth = screenHeight;
+                                        screenHeight = tempWidth;
+                                    }
+                                }
+                            };
+                            
+                            // НЕ применяем локальный полноэкранный режим сразу
+                            // Ждем ответа от родителя, чтобы узнать, открыл ли он новое окно
+                            // Если родитель откроет новое окно, мы не должны применять изменения к iframe
+                            
+                            // Пытаемся заблокировать ориентацию после небольшой задержки
+                            // (только если не открыто новое окно)
+                            setTimeout(() => {
+                                // Проверяем, не открыл ли родитель новое окно
+                                // Если через 200ms мы все еще в iframe и не получили ответ, применяем изменения
+                                if (isInIframe && !isFullscreenMode) {
+                                    // Родитель не открыл новое окно, применяем CSS изменения
+                                    applyLocalFullscreen(container, screenWidth, screenHeight);
+                                    lockOrientation();
+                                }
+                            }, 200);
+                            
+                            // Также слушаем ответ от родительского окна для синхронизации размеров
+                            const messageHandler = (event) => {
+                                if (event.data && event.data.type === 'fullscreen-response') {
+                                    window.removeEventListener('message', messageHandler);
+                                    console.log('[FULLSCREEN] Received response from parent:', event.data);
+                                    
+                                    // КРИТИЧЕСКИ ВАЖНО: Если родитель открыл новое окно, НЕ применяем изменения к iframe
+                                    if (event.data.openedInNewWindow) {
+                                        console.log('[FULLSCREEN] Parent opened new window, NOT applying CSS changes to iframe');
+                                        // Просто устанавливаем флаг, но НЕ применяем CSS изменения
+                                        isFullscreenMode = true;
+                                        window.wasOpenedInNewWindow = true; // Сохраняем флаг для выхода
+                                        updateFullscreenButton();
+                                        return; // Выходим, не применяя изменения
+                                    } else {
+                                        // Если новое окно не было открыто, сбрасываем флаг
+                                        window.wasOpenedInNewWindow = false;
+                                    }
+                                    
+                                    // Если родитель передал размеры экрана, обновляем локальный fullscreen
+                                    if (event.data.screenWidth && event.data.screenHeight) {
+                                        applyLocalFullscreen(container, event.data.screenWidth, event.data.screenHeight);
+                                    }
+                                }
+                            };
+                            window.addEventListener('message', messageHandler);
+                        } else {
+                            // Выходим из полноэкранного режима
+                            window.parent.postMessage({
+                                type: 'request-fullscreen',
+                                action: 'exit',
+                                origin: window.location.origin
+                            }, '*');
+                            
+                            // КРИТИЧЕСКИ ВАЖНО: Если было открыто новое окно, НЕ восстанавливаем стили iframe
+                            // потому что мы их не применяли
+                            if (!window.wasOpenedInNewWindow) {
+                                exitLocalFullscreen(container);
+                            } else {
+                                // Просто сбрасываем флаг
+                                isFullscreenMode = false;
+                                updateFullscreenButton();
+                                window.wasOpenedInNewWindow = false;
+                            }
+                        }
+                        return;
+                        
+                        // Также применяем локальный полноэкранный режим
+                        if (!isFullscreenMode) {
+                            isFullscreenMode = true;
+                            container.classList.add('ios-fullscreen');
+                            document.body.classList.add('ios-fullscreen');
+                            document.documentElement.classList.add('ios-fullscreen');
+                            
+                            // Устанавливаем размеры на весь экран
+                            const screenWidth = window.innerWidth || screen.width;
+                            const screenHeight = window.innerHeight || screen.height;
+                            
+                            container.style.width = screenWidth + 'px';
+                            container.style.height = screenHeight + 'px';
+                            container.style.position = 'fixed';
+                            container.style.top = '0';
+                            container.style.left = '0';
+                            container.style.right = '0';
+                            container.style.bottom = '0';
+                            container.style.margin = '0';
+                            container.style.padding = '0';
+                            container.style.zIndex = '999999';
+                            
+                            // Также применяем стили к html для полноэкранного режима
+                            document.documentElement.style.width = '100%';
+                            document.documentElement.style.height = '100%';
+                            document.documentElement.style.overflow = 'hidden';
+                            document.documentElement.style.margin = '0';
+                            document.documentElement.style.padding = '0';
+                            
+            // Настраиваем viewer-content
+            const viewerContent = document.querySelector('.viewer-content');
+            if (viewerContent) {
+                const toolbarHeight = window.currentToolbarHeight || (toolbar ? toolbar.offsetHeight : 60);
+                                viewerContent.style.width = screenWidth + 'px';
+                                viewerContent.style.height = (screenHeight - toolbarHeight) + 'px';
+                                viewerContent.style.position = 'absolute';
+                                viewerContent.style.top = toolbarHeight + 'px';
+                                viewerContent.style.left = '0';
+                                viewerContent.style.margin = '0';
+                                viewerContent.style.padding = '0';
+                            }
+                            
+                            // Блокируем прокрутку
+                            document.body.style.overflow = 'hidden';
+                            document.documentElement.style.overflow = 'hidden';
+                            document.body.style.position = 'fixed';
+                            document.body.style.width = '100%';
+                            document.body.style.height = '100%';
+                            
+                            // Пересчитываем zoom
+                            setTimeout(() => {
+                                applyZoom();
+                                if (watermarkCanvas) {
+                                    updateCanvasSize();
+                                }
+                            }, 100);
+                            
+                            updateFullscreenButton();
+                            console.log('[FULLSCREEN] iOS fullscreen mode enabled in iframe');
+                        } else {
+                            // Выходим из полноэкранного режима
+                            isFullscreenMode = false;
+                            container.classList.remove('ios-fullscreen');
+                            document.body.classList.remove('ios-fullscreen');
+                            document.documentElement.classList.remove('ios-fullscreen');
+                            
+                            // Восстанавливаем размеры
+                            container.style.width = '';
+                            container.style.height = '';
+                            container.style.position = '';
+                            container.style.top = '';
+                            container.style.left = '';
+                            container.style.right = '';
+                            container.style.bottom = '';
+                            container.style.zIndex = '';
+                            
+                            const viewerContent = document.querySelector('.viewer-content');
+                            if (viewerContent) {
+                                viewerContent.style.width = '';
+                                viewerContent.style.height = '';
+                                viewerContent.style.position = '';
+                                viewerContent.style.top = '';
+                                viewerContent.style.left = '';
+                            }
+                            
+                            document.body.style.overflow = '';
+                            document.documentElement.style.overflow = '';
+                            document.body.style.position = '';
+                            document.body.style.width = '';
+                            document.body.style.height = '';
+                            
+                            setTimeout(() => {
+                                applyZoom();
+                                if (watermarkCanvas) {
+                                    updateCanvasSize();
+                                }
+                            }, 100);
+                            
+                            updateFullscreenButton();
+                            console.log('[FULLSCREEN] iOS fullscreen mode disabled in iframe');
+                        }
+                        return;
+                    } catch (e) {
+                        console.error('[FULLSCREEN] Error communicating with parent:', e);
+                    }
+                }
+                
+                // Если не в iframe, используем стандартный подход
+                // iOS Safari не поддерживает стандартный Fullscreen API
+                // Используем альтернативный подход - CSS полноэкранный режим
+                if (!isFullscreenMode) {
+                    // Входим в полноэкранный режим
+                    isFullscreenMode = true;
+                    container.classList.add('ios-fullscreen');
+                    document.body.classList.add('ios-fullscreen');
+                    
+                    // Устанавливаем размеры на весь экран
+                    let screenWidth = window.innerWidth || screen.width;
+                    let screenHeight = window.innerHeight || screen.height;
+                    
+                    // Пытаемся заблокировать ориентацию в ландшафтный режим
+                    const lockOrientation = () => {
+                        if (window.screen && window.screen.orientation && window.screen.orientation.lock) {
+                            // Пытаемся заблокировать в ландшафтный режим
+                            window.screen.orientation.lock('landscape').then(() => {
+                                console.log('[FULLSCREEN] Orientation locked to landscape');
+                                // Обновляем размеры после поворота
+                                setTimeout(() => {
+                                    screenWidth = window.innerWidth || screen.width;
+                                    screenHeight = window.innerHeight || screen.height;
+                                    applyLocalFullscreen(container, screenWidth, screenHeight);
+                                }, 200);
+                            }).catch((err) => {
+                                console.log('[FULLSCREEN] Could not lock orientation:', err);
+                                // Если не удалось заблокировать, пытаемся повернуть контент через CSS
+                                if (screenHeight > screenWidth) {
+                                    // Если портретная ориентация, поворачиваем контент на 90 градусов
+                                    container.style.transform = 'rotate(90deg)';
+                                    container.style.transformOrigin = 'center center';
+                                    // Меняем местами ширину и высоту для повернутого контента
+                                    const tempWidth = screenWidth;
+                                    screenWidth = screenHeight;
+                                    screenHeight = tempWidth;
+                                }
+                            });
+                        } else if (screen.orientation && screen.orientation.lock) {
+                            // Старый API
+                            screen.orientation.lock('landscape').then(() => {
+                                console.log('[FULLSCREEN] Orientation locked to landscape (old API)');
+                                setTimeout(() => {
+                                    screenWidth = window.innerWidth || screen.width;
+                                    screenHeight = window.innerHeight || screen.height;
+                                    applyLocalFullscreen(container, screenWidth, screenHeight);
+                                }, 200);
+                            }).catch((err) => {
+                                console.log('[FULLSCREEN] Could not lock orientation (old API):', err);
+                            });
+                        } else {
+                            // Если API недоступен, пытаемся повернуть контент через CSS
+                            if (screenHeight > screenWidth) {
+                                console.log('[FULLSCREEN] Orientation API not available, rotating content via CSS');
+                                container.style.transform = 'rotate(90deg)';
+                                container.style.transformOrigin = 'center center';
+                                // Меняем местами ширину и высоту для повернутого контента
+                                const tempWidth = screenWidth;
+                                screenWidth = screenHeight;
+                                screenHeight = tempWidth;
+                            }
+                        }
+                    };
+                    
+                    // Применяем локальный полноэкранный режим
+                    applyLocalFullscreen(container, screenWidth, screenHeight);
+                    
+                    // Пытаемся заблокировать ориентацию после небольшой задержки
+                    setTimeout(lockOrientation, 100);
+                    
+                    // Скрываем адресную строку на iOS (прокрутка вниз)
+                    window.scrollTo(0, 1);
+                    
+                    // Блокируем прокрутку
+                    document.body.style.overflow = 'hidden';
+                    document.documentElement.style.overflow = 'hidden';
+                    document.body.style.position = 'fixed';
+                    document.body.style.width = '100%';
+                    document.body.style.height = '100%';
+                    
+                    // Пересчитываем zoom для нового размера экрана
+                    setTimeout(() => {
+                        applyZoom();
+                        // Пересчитываем размеры canvas водяного знака
+                        if (watermarkCanvas) {
+                            updateCanvasSize();
+                        }
+                    }, 100);
+                    
+                    // Обновляем кнопку
+                    updateFullscreenButton();
+                    
+                    console.log('[FULLSCREEN] iOS fullscreen mode enabled', screenWidth, 'x', screenHeight);
+                } else {
+                    // Выходим из полноэкранного режима
+                    exitLocalFullscreen(container);
+                    document.body.style.width = '';
+                    document.body.style.height = '';
+                    
+                    // Пересчитываем zoom для обычного режима
+                    setTimeout(() => {
+                        applyZoom();
+                        if (watermarkCanvas) {
+                            updateCanvasSize();
+                        }
+                    }, 100);
+                    
+                    // Обновляем кнопку
+                    updateFullscreenButton();
+                    
+                    console.log('[FULLSCREEN] iOS fullscreen mode disabled');
+                }
+                return;
+            }
+            
+            // Стандартный Fullscreen API для других браузеров
+            // Проверяем, поддерживается ли Fullscreen API
+            if (!document.fullscreenElement && 
+                !document.webkitFullscreenElement && 
+                !document.mozFullScreenElement && 
+                !document.msFullscreenElement) {
+                // Входим в полноэкранный режим
+                if (container.requestFullscreen) {
+                    container.requestFullscreen().catch(err => {
+                        console.error('[FULLSCREEN] Error entering fullscreen:', err);
+                        showOverlay('Не удалось войти в полноэкранный режим');
+                    });
+                } else if (container.webkitRequestFullscreen) {
+                    container.webkitRequestFullscreen();
+                } else if (container.mozRequestFullScreen) {
+                    container.mozRequestFullScreen();
+                } else if (container.msRequestFullscreen) {
+                    container.msRequestFullscreen();
+                } else {
+                    // Если Fullscreen API не поддерживается, используем CSS подход
+                    container.classList.add('css-fullscreen');
+                    document.body.classList.add('css-fullscreen');
+                    isFullscreenMode = true;
+                    updateFullscreenButton();
+                }
+            } else {
+                // Выходим из полноэкранного режима
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(err => {
+                        console.error('[FULLSCREEN] Error exiting fullscreen:', err);
+                    });
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                } else if (document.mozCancelFullScreen) {
+                    document.mozCancelFullScreen();
+                } else if (document.msExitFullscreen) {
+                    document.msExitFullscreen();
+                } else {
+                    // Выходим из CSS полноэкранного режима
+                    container.classList.remove('css-fullscreen');
+                    document.body.classList.remove('css-fullscreen');
+                    isFullscreenMode = false;
+                    updateFullscreenButton();
+                }
+            }
+        }
+        
+        // Обновляем иконку кнопки полноэкранного режима
+        function updateFullscreenButton() {
+            const btn = document.getElementById('fullscreenBtn');
+            if (!btn) return;
+            
+            const isFullscreen = !!(document.fullscreenElement || 
+                                   document.webkitFullscreenElement || 
+                                   document.mozFullScreenElement || 
+                                   document.msFullscreenElement ||
+                                   isFullscreenMode);
+            
+            if (isFullscreen) {
+                btn.textContent = '⛶';
+                btn.title = 'Выйти из полноэкранного режима';
+                btn.classList.add('active');
+            } else {
+                btn.textContent = '⛶';
+                btn.title = 'Полноэкранный режим';
+                btn.classList.remove('active');
+            }
+        }
+        
+        // Обработчики событий полноэкранного режима
+        document.addEventListener('fullscreenchange', updateFullscreenButton);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+        document.addEventListener('mozfullscreenchange', updateFullscreenButton);
+        document.addEventListener('MSFullscreenChange', updateFullscreenButton);
+        
+        // Обработчик сообщений от родительского окна для получения размеров экрана
+        window.addEventListener('message', (event) => {
+            // Проверяем, находимся ли мы в iframe
+            const isInIframe = window.self !== window.top;
+            
+            if (event.data && event.data.type === 'fullscreen-screen-size') {
+                const screenWidth = event.data.width;
+                const screenHeight = event.data.height;
+                console.log('[FULLSCREEN] Received screen size from parent:', screenWidth, 'x', screenHeight);
+                
+                // КРИТИЧЕСКИ ВАЖНО: Если мы в iframe и родитель открыл новое окно, НЕ применяем изменения
+                if (isInIframe && event.data.openedInNewWindow) {
+                    console.log('[FULLSCREEN] Parent opened new window, NOT applying CSS changes to iframe');
+                    return; // Выходим, не применяя изменения
+                }
+                
+                // Если мы в полноэкранном режиме, обновляем размеры через applyLocalFullscreen
+                if (isFullscreenMode) {
+                    const container = document.querySelector('.viewer-container');
+                    if (container) {
+                        applyLocalFullscreen(container, screenWidth, screenHeight);
+                    }
+                }
+            }
+        });
+        
+        // Применяем упрощение toolbar при загрузке, если в портретной ориентации
+        setTimeout(() => {
+            simplifyToolbarForPortrait();
+        }, 100);
+        
+        // Для iOS: обработка изменения ориентации и размера окна
+        if (isIOS) {
+            // При изменении ориентации обновляем полноэкранный режим и toolbar
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => {
+                    // Упрощаем или восстанавливаем toolbar в зависимости от ориентации
+                    simplifyToolbarForPortrait();
+                    
+                    if (isFullscreenMode) {
+                        // Обновляем размеры при изменении ориентации
+                        const container = document.querySelector('.viewer-container');
+                        if (container) {
+                            container.style.width = window.innerWidth + 'px';
+                            container.style.height = window.innerHeight + 'px';
+                        }
+                    }
+                }, 100);
+            });
+            
+            // Также отслеживаем изменение размера окна (для случаев без orientationchange)
+            window.addEventListener('resize', () => {
+                setTimeout(() => {
+                    simplifyToolbarForPortrait();
+                }, 100);
+            });
+            
+            // Обработка прокрутки для скрытия адресной строки
+            let lastScrollTop = 0;
+            window.addEventListener('scroll', () => {
+                if (isFullscreenMode) {
+                    const currentScrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                    // Если прокрутка вниз, скрываем адресную строку
+                    if (currentScrollTop > lastScrollTop && currentScrollTop > 0) {
+                        window.scrollTo(0, 1);
+                    }
+                    lastScrollTop = currentScrollTop;
+                }
+            });
+        }
+        
+        // Поддержка клавиатуры для полноэкранного режима (F11 или Escape)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'F11') {
+                e.preventDefault();
+                toggleFullscreen();
+            } else if (e.key === 'Escape' && isFullscreenMode && !isIOS) {
+                // Escape для выхода из полноэкранного режима (не для iOS, там нет Escape)
+                toggleFullscreen();
+            }
+        });
         
         function showOverlay(message) {
             const overlay = document.getElementById('overlay');
@@ -1443,19 +2696,20 @@
                 const basePadding = Math.max(30, baseFontSize * 0.4); // Минимум 30px или 40% от размера шрифта
                 const padding = basePadding + Math.max(15, textWidthSafetyMargin * 0.6); // Дополнительный запас для ширины текста
                 
+                // Debug вывод убран для уменьшения шума в консоли
                 // Логируем для отладки (только при первом рендере или переключении позиций)
-                if (performance.now() - lastSwitchTime < 100) {
-                    console.log('Text metrics calculation:', {
-                        baseFontSize,
-                        ascentFallback, descentFallback,
-                        finalAscent: ascent, finalDescent: descent,
-                        actualTextHeight,
-                        textWidthRaw: textMetrics.width,
-                        textWidthSafetyMargin,
-                        textWidth: textWidth,
-                        padding
-                    });
-                }
+                // if (performance.now() - lastSwitchTime < 100) {
+                //     console.log('Text metrics calculation:', {
+                //         baseFontSize,
+                //         ascentFallback, descentFallback,
+                //         finalAscent: ascent, finalDescent: descent,
+                //         actualTextHeight,
+                //         textWidthRaw: textMetrics.width,
+                //         textWidthSafetyMargin,
+                //         textWidth: textWidth,
+                //         padding
+                //     });
+                // }
                 
                 // Используем размеры canvas (которые равны naturalWidth/naturalHeight изображения)
                 // Canvas имеет те же размеры, что и изображение, поэтому границы простые
@@ -1563,35 +2817,7 @@
                     const canvasRect = watermarkCanvas.getBoundingClientRect();
                     const imgRect = img.getBoundingClientRect();
                     
-                    console.log('Watermark rendered at:', {
-                        x: finalX, y: finalY,
-                        textWidth, ascent, descent,
-                        textBounds: { 
-                            left: renderedTextLeft, 
-                            right: renderedTextRight, 
-                            top: renderedTextTop, 
-                            bottom: renderedTextBottom 
-                        },
-                        canvasBounds: { 
-                            width: canvasW, 
-                            height: canvasH,
-                            screenWidth: canvasRect.width,
-                            screenHeight: canvasRect.height
-                        },
-                        imageBounds: {
-                            naturalWidth: img.naturalWidth,
-                            naturalHeight: img.naturalHeight,
-                            screenWidth: imgRect.width,
-                            screenHeight: imgRect.height
-                        },
-                        padding,
-                        bounds: { minX, maxX, minY, maxY },
-                        isWithinBounds,
-                        currentPos: currentPos,
-                        positionIndex: positionIndex,
-                        totalPositions: watermarkPositions.length
-                    });
-                    
+                    // Debug вывод убран для уменьшения шума в консоли
                     lastDetailedLog = currentTime;
                     
                     if (!isWithinBounds) {
@@ -1612,7 +2838,7 @@
                 if (currentTime - lastSwitchTime >= switchInterval) {
                     positionIndex = (positionIndex + 1) % watermarkPositions.length;
                     lastSwitchTime = currentTime;
-                    console.log('Switched to position', positionIndex, 'of', watermarkPositions.length);
+                    // Debug вывод убран для уменьшения шума в консоли
                 }
                 
                 // Продолжаем рендеринг
